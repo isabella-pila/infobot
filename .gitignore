@@ -1,0 +1,25 @@
+# Ambiente virtual
+venv/
+env/
+.venv/
+
+# Arquivos de configuração do sistema
+.DS_Store
+Thumbs.db
+
+# Arquivos de log
+*.log
+
+# Arquivo de variáveis de ambiente
+.env
+
+# Bytecode Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Outros diretórios/arquivos que não quer versionar
+*.sqlite3
+users.db
+

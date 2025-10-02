@@ -1,0 +1,13 @@
+streamlit
+python-dotenv
+PyMuPDF
+PyPDF2
+langchain
+langchain-google-genai
+langchain-community
+langchain-core
+google-auth
+streamlit-authenticator
+bcrypt
+faiss-cpu
+pymongo
