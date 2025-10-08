@@ -11,3 +11,4 @@ streamlit-authenticator
 bcrypt
 faiss-cpu
 pymongo
+tinydb

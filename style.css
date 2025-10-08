@@ -1,0 +1,22 @@
+/* Muda a cor de fundo da barra lateral */
+[data-testid="stSidebar"] {
+    background-color: #334257;
+}
+
+/* Estiliza o botão principal */
+.stButton>button {
+    color: white;
+    background-color: #548CA8;
+    border: 2px solid #445069;
+    border-radius: 10px;
+}
+
+.stButton>button:hover {
+    background-color: #445069;
+    color: #FFC107;
+}
+
+/* Muda a cor dos títulos H1 */
+h1 {
+    color: #548CA8;
+}
