@@ -1,11 +1,18 @@
 # chat_db.py
-from tinydb import TinyDB, Query
 import os
 from typing import List, Optional, Tuple
+from pymongo import MongoClient
+from bson import ObjectId
+from dotenv import load_dotenv
 
-os.makedirs("data", exist_ok=True)
-db = TinyDB("data/chat_db.json")
-Chat = Query()
+# Carrega variáveis do .env
+load_dotenv()
+
+# Conexão com MongoDB
+MONGO_URI = os.getenv("MONGO_URI")
+client = MongoClient(MONGO_URI)
+db = client["chat_database"]  
+chats_collection = db["chats"] 
 
 def salvar_chat(
     username: str,
@@ -18,23 +25,29 @@ def salvar_chat(
     if pdf_paths is not None:
         dados["pdf_paths"] = pdf_paths
 
-    existing = db.search((Chat.username == username) & (Chat.chat_name == chat_name))
+    existing = chats_collection.find_one({"username": username, "chat_name": chat_name})
+
     if existing:
-        db.update(dados, doc_ids=[existing[0].doc_id])
+        chats_collection.update_one(
+            {"_id": existing["_id"]},
+            {"$set": dados}
+        )
     else:
         dados.update({"username": username, "chat_name": chat_name})
-        db.insert(dados)
+        chats_collection.insert_one(dados)
 
-def listar_chats(username: str) -> List[Tuple[int, str]]:
-    resultados = db.search(Chat.username == username)
-    return [(r.doc_id, r["chat_name"]) for r in resultados]
+def listar_chats(username: str) -> List[Tuple[str, str]]:
+    """Lista todos os chats de um usuário (retorna id e nome)."""
+    resultados = chats_collection.find({"username": username})
+    return [(str(r["_id"]), r["chat_name"]) for r in resultados]
 
-def carregar_chat(chat_id: int) -> Tuple[List[dict], Optional[List[str]]]:
-    chat = db.get(doc_id=chat_id)
+def carregar_chat(chat_id: str) -> Tuple[List[dict], Optional[List[str]]]:
+    """Carrega mensagens e PDFs de um chat pelo ID."""
+    chat = chats_collection.find_one({"_id": ObjectId(chat_id)})
     if chat:
-        return chat["messages"], chat.get("pdf_paths")
+        return chat.get("messages", []), chat.get("pdf_paths")
     return [], None
 
-
-def delete_chat(chat_id: int) -> None:
-    db.remove(doc_ids=[chat_id])
+def delete_chat(chat_id: str) -> None:
+    """Remove um chat pelo ID."""
+    chats_collection.delete_one({"_id": ObjectId(chat_id)})

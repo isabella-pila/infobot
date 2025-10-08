@@ -8,7 +8,6 @@ import fitz
 import asyncio
 import sys
 import nest_asyncio
-
 from langchain_community.document_loaders import AsyncChromiumLoader
 from langchain_community.document_transformers import BeautifulSoupTransformer
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
