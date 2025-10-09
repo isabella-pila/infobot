@@ -20,10 +20,9 @@ from langchain.memory import ConversationBufferMemory
 from chat_db import salvar_chat, listar_chats, carregar_chat, delete_chat
 from langchain_community.utilities import GoogleSerperAPIWrapper
 from langchain.text_splitter import CharacterTextSplitter
+from utils import tratar_erro_api
 
-# -----------------------------
-# Inicialização
-# -----------------------------
+
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
@@ -31,7 +30,7 @@ load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 SERPER_API_KEY = os.getenv("SERPER_API_KEY")
 
-st.set_page_config(page_title="Assistente Gemini", page_icon="✨")
+st.set_page_config(page_title="Assistente CEFET-MG", page_icon="✨")
 
 if not GOOGLE_API_KEY or not SERPER_API_KEY:
     st.error("Chaves de API não encontradas. Verifique seu arquivo .env.")
@@ -60,7 +59,12 @@ def get_text_chunks(text):
     return splitter.split_text(text)
 
 def get_vectorstore(chunks):
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004", google_api_key=GOOGLE_API_KEY)
+    try:
+     embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004", google_api_key=GOOGLE_API_KEY)
+    except Exception as e:
+        tratar_erro_api("Google Embeddings", e)
+        st.stop()
+
     return FAISS.from_texts(chunks, embedding=embeddings)
 
 def carregar_vectorstore_default():
@@ -71,7 +75,12 @@ def carregar_vectorstore_default():
     with fitz.open(path) as doc:
         text = "".join(page.get_text("text") for page in doc)
     document = Document(page_content=text, metadata={"source": path})
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004", google_api_key=GOOGLE_API_KEY)
+    
+    try:
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004", google_api_key=GOOGLE_API_KEY)
+    except Exception as e:
+        tratar_erro_api("Google Embeddings", e)
+        st.stop()
     return FAISS.from_documents([document], embeddings)
 
 # -----------------------------
@@ -134,7 +143,12 @@ Pergunta: {question}
 Pergunta independente:"""
 
 def criar_chain(vectorstore, mensagens_anteriores=None):
-    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.7, google_api_key=GOOGLE_API_KEY)
+    try:
+        llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.7, google_api_key=GOOGLE_API_KEY)
+    except Exception as e:
+        tratar_erro_api("Gemini", e)
+        st.stop()
+
     
     memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
     if mensagens_anteriores:
@@ -158,11 +172,17 @@ def criar_chain(vectorstore, mensagens_anteriores=None):
 # Busca web
 # -----------------------------
 def criar_query_de_busca(pergunta: str) -> str:
-    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.0, google_api_key=GOOGLE_API_KEY)
+    try:
+     llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.1, google_api_key=GOOGLE_API_KEY)
+    except Exception as e:
+        tratar_erro_api("Gemini", e)
+        st.stop()
+
     
     template = """
     Sua tarefa é extrair as palavras-chave essenciais da "Pergunta do Usuário" para realizar uma busca eficiente na internet.
-    Adicione "CEFET-MG" 
+    Adicione "CEFET-MG" quando for perguntas sobre evento, senanas de evento.
+    não fuja muito do site do cefet-mg
 
     Pergunta do Usuário: "{pergunta}"
     Query de Busca:
@@ -186,7 +206,7 @@ def buscar_serper(query: str, max_results: int = 4) -> list[dict]:
                 resultados.append({"title": title, "link": link, "snippet": snippet})
         return resultados
     except Exception as e:
-        st.warning(f"Erro ao buscar na web: {e}")
+        tratar_erro_api("Serper", e)
         return []
 
 def extrair_e_resumir_web(llm, resultados_busca: list[dict], pergunta: str):
@@ -297,7 +317,6 @@ with st.sidebar:
                 chunks = get_text_chunks(texto)
                 vectorstore = get_vectorstore(chunks)
             else:
-                st.warning("📂 PDFs não encontrados. Carregando base padrão.")
                 vectorstore = carregar_vectorstore_default()
             if vectorstore:
                 st.session_state.chain = criar_chain(vectorstore, st.session_state.messages)
@@ -374,28 +393,21 @@ if user_input := st.chat_input("Digite sua pergunta"):
                 resultados_web = buscar_serper(query_web, max_results=4)
 
                 if resultados_web:
-                    # Mostrar os 4 links principais
                     st.markdown("**🔗 Principais resultados encontrados:**")
                     for r in resultados_web:
                         st.markdown(f"- [{r['title']}]({r['link']})")
 
-                    # Criar um resumo com base nos snippets
-                    texto_para_resumir = "\n\n".join(
-                        [f"{r['title']} - {r['snippet']} ({r['link']})" for r in resultados_web]
-                    )
 
-                    llm_web = ChatGoogleGenerativeAI(
-                        model="gemini-2.0-flash",
-                        temperature=0.4,
-                        google_api_key=GOOGLE_API_KEY,
-                    )
+                    try:
+                        llm_web = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.4, google_api_key=GOOGLE_API_KEY)
+                    except Exception as e:
+                        tratar_erro_api("Gemini", e)
+                        st.stop()
 
-                    resumo_web = llm_web.invoke(
-                        f"Com base nas informações abaixo, escreva um resumo direto e informativo sobre '{user_input}', citando as fontes quando relevante:\n\n{texto_para_resumir}"
-                    ).content
 
-                    # ⚠️ Aqui está a diferença: não junta com o texto do RAG.
-                    # Mostra apenas o resumo da web.
+                    st.info("🕵️‍♀️ Coletando informações completas dos sites encontrados... Por favor, aguarde alguns minutos.")
+                    resumo_web = extrair_e_resumir_web(llm_web, resultados_web, user_input)
+                    
                     final_bot_msg = (
                          resumo_web
                     )
