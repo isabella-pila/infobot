@@ -26,6 +26,9 @@ from utils import tratar_erro_api
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
+if not os.path.exists(os.path.expanduser("~/.cache/ms-playwright")):
+    os.system("playwright install chromium")
+
 load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 SERPER_API_KEY = os.getenv("SERPER_API_KEY")
