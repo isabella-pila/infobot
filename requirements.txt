@@ -15,3 +15,4 @@ tinydb
 nest_asyncio
 psycopg2-binary
 playwright
+beautifulsoup4
