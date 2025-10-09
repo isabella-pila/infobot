@@ -412,9 +412,8 @@ if user_input := st.chat_input("Digite sua pergunta"):
                         st.stop()
 
 
-                    resumo_web = llm_web.invoke(
-                        f"Com base nas informações abaixo, escreva um resumo direto e informativo sobre '{user_input}', citando as fontes quando relevante:\n\n{texto_para_resumir}"
-                    ).content
+                    st.info("🕵️‍♀️ Coletando informações completas dos sites encontrados...")
+                    resumo_web = extrair_e_resumir_web(llm_web, resultados_web, user_input)
 
                     # ⚠️ Aqui está a diferença: não junta com o texto do RAG.
                     # Mostra apenas o resumo da web.
