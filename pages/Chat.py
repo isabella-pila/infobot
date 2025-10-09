@@ -400,10 +400,6 @@ if user_input := st.chat_input("Digite sua pergunta"):
                     for r in resultados_web:
                         st.markdown(f"- [{r['title']}]({r['link']})")
 
-                    # Criar um resumo com base nos snippets
-                    texto_para_resumir = "\n\n".join(
-                        [f"{r['title']} - {r['snippet']} ({r['link']})" for r in resultados_web]
-                    )
 
                     try:
                         llm_web = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.4, google_api_key=GOOGLE_API_KEY)
@@ -412,11 +408,10 @@ if user_input := st.chat_input("Digite sua pergunta"):
                         st.stop()
 
 
-                    st.info("🕵️‍♀️ Coletando informações completas dos sites encontrados...")
+                    st.info("🕵️‍♀️ Coletando informações completas dos sites encontrados... Por favor, aguarde alguns minutos")
                     resumo_web = extrair_e_resumir_web(llm_web, resultados_web, user_input)
 
-                    # ⚠️ Aqui está a diferença: não junta com o texto do RAG.
-                    # Mostra apenas o resumo da web.
+
                     final_bot_msg = (
                          resumo_web
                     )

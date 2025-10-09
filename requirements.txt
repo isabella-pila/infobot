@@ -11,6 +11,7 @@ streamlit-authenticator
 bcrypt
 faiss-cpu
 pymongo
+dnspython
 tinydb
 nest_asyncio
 psycopg2-binary

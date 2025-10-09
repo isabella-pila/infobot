@@ -27,4 +27,4 @@ with st.form("login_form"):
             st.error("Usuário ou senha incorretos.")
 
 if st.button("Não tem conta? Cadastre-se"):
-    st.switch_page("Chat")
+    st.switch_page("pages/Cadastro.py")
