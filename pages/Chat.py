@@ -22,7 +22,9 @@ from langchain_community.utilities import GoogleSerperAPIWrapper
 from langchain.text_splitter import CharacterTextSplitter
 from utils import tratar_erro_api
 
-
+# -----------------------------
+# Inicialização
+# -----------------------------
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
@@ -410,8 +412,10 @@ if user_input := st.chat_input("Digite sua pergunta"):
                         st.stop()
 
 
-                    st.info("🕵️‍♀️ Coletando informações completas dos sites encontrados...")
-                    resumo_web = extrair_e_resumir_web(llm_web, resultados_web, user_input)
+                    resumo_web = llm_web.invoke(
+                        f"Com base nas informações abaixo, escreva um resumo direto e informativo sobre '{user_input}', citando as fontes quando relevante:\n\n{texto_para_resumir}"
+                    ).content
+
                     # ⚠️ Aqui está a diferença: não junta com o texto do RAG.
                     # Mostra apenas o resumo da web.
                     final_bot_msg = (
