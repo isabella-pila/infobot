@@ -53,4 +53,4 @@ with st.form("cadastro_form"):
                 conn.close()
 
 if st.button("Já tem conta? Faça login"):
-    st.switch_page("Login.py")
+    st.switch_page("Login")
