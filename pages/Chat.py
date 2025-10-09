@@ -26,9 +26,6 @@ from utils import tratar_erro_api
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
-if not os.path.exists(os.path.expanduser("~/.cache/ms-playwright")):
-    os.system("playwright install chromium")
-
 load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 SERPER_API_KEY = os.getenv("SERPER_API_KEY")
@@ -184,8 +181,7 @@ def criar_query_de_busca(pergunta: str) -> str:
     
     template = """
     Sua tarefa é extrair as palavras-chave essenciais da "Pergunta do Usuário" para realizar uma busca eficiente na internet.
-    Adicione "CEFET-MG" quando for perguntas sobre evento, senanas de evento.
-    não fuja muito do site do cefet-mg
+    Adicione "CEFET-MG" 
 
     Pergunta do Usuário: "{pergunta}"
     Query de Busca:
@@ -320,6 +316,7 @@ with st.sidebar:
                 chunks = get_text_chunks(texto)
                 vectorstore = get_vectorstore(chunks)
             else:
+                st.warning("📂 PDFs não encontrados. Carregando base padrão.")
                 vectorstore = carregar_vectorstore_default()
             if vectorstore:
                 st.session_state.chain = criar_chain(vectorstore, st.session_state.messages)
@@ -396,10 +393,15 @@ if user_input := st.chat_input("Digite sua pergunta"):
                 resultados_web = buscar_serper(query_web, max_results=4)
 
                 if resultados_web:
+                    # Mostrar os 4 links principais
                     st.markdown("**🔗 Principais resultados encontrados:**")
                     for r in resultados_web:
                         st.markdown(f"- [{r['title']}]({r['link']})")
 
+                    # Criar um resumo com base nos snippets
+                    texto_para_resumir = "\n\n".join(
+                        [f"{r['title']} - {r['snippet']} ({r['link']})" for r in resultados_web]
+                    )
 
                     try:
                         llm_web = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.4, google_api_key=GOOGLE_API_KEY)
@@ -408,9 +410,10 @@ if user_input := st.chat_input("Digite sua pergunta"):
                         st.stop()
 
 
-                    st.info("🕵️‍♀️ Coletando informações completas dos sites encontrados... Por favor, aguarde alguns minutos.")
+                    st.info("🕵️‍♀️ Coletando informações completas dos sites encontrados...")
                     resumo_web = extrair_e_resumir_web(llm_web, resultados_web, user_input)
-                    
+                    # ⚠️ Aqui está a diferença: não junta com o texto do RAG.
+                    # Mostra apenas o resumo da web.
                     final_bot_msg = (
                          resumo_web
                     )

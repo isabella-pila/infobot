@@ -22,9 +22,9 @@ with st.form("login_form"):
 
         if auth_status:
             st.success(f"Bem-vindo, {name}!")
-            st.switch_page("Chat")
+            st.switch_page("Chat.py")
         else:
             st.error("Usuário ou senha incorretos.")
 
 if st.button("Não tem conta? Cadastre-se"):
-    st.switch_page("Cadastro")
+    st.switch_page("Chat")
