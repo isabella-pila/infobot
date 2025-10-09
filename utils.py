@@ -9,7 +9,6 @@ SERPER_API_KEY = os.getenv("SERPER_API_KEY")
 
 
 def tratar_erro_api(api_nome: str, erro: Exception):
-    """Exibe mensagens amigáveis de erro de API no Streamlit."""
     erro_str = str(erro).lower()
 
     if "quota" in erro_str or "rate limit" in erro_str:
