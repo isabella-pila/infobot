@@ -383,7 +383,7 @@ if user_input := st.chat_input("Digite sua pergunta"):
         final_bot_msg = rag_response
 
        
-        # ⚡ Busca web: só se não houver PDFs carregados
+
         if (
             (not st.session_state.pdf_paths or len(st.session_state.pdf_paths) == 0)
             and any(trigger in rag_response.lower() for trigger in GATILHOS_FALLBACK)

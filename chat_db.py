@@ -5,10 +5,10 @@ from pymongo import MongoClient
 from bson import ObjectId
 from dotenv import load_dotenv
 
-# Carrega variáveis do .env
+
 load_dotenv()
 
-# Conexão com MongoDB
+
 MONGO_URI = os.getenv("MONGO_URI")
 client = MongoClient(MONGO_URI)
 db = client["chat_database"]  
