@@ -5,6 +5,8 @@ pypdf
 PyPDF2 # Alternativa/Complemento ao PyPDF2
 PyMuPDF # Usado para 'fitz'
 # PyPDF2 # Incluído acima
+nest_asyncio
+psycopg2-binary
 
 # Dependências do LangChain (importante que estejam listadas)
 langchain==0.1.20 

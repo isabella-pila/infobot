@@ -1,5 +1,3 @@
 # Conteúdo do runtime.txt
 
 python-3.12.3 
-# OU, se preferir o 3.11, que também é muito estável:
-# python-3.11.9
