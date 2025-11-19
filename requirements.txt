@@ -7,10 +7,10 @@ PyMuPDF # Usado para 'fitz'
 # PyPDF2 # Incluído acima
 
 # Dependências do LangChain (importante que estejam listadas)
-langchain
-langchain-core
-langchain-community 
-langchain-google-genai
+langchain==0.1.20 
+langchain-google-genai==0.0.18
+langchain-community==0.0.38
+langchain-core==0.1.52
 # Ferramentas
 google-auth
 google-search-results # Para o GoogleSerperAPIWrapper (Serper)
