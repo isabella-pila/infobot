@@ -3,8 +3,6 @@ import bcrypt
 import streamlit_authenticator as stauth
 from dotenv import load_dotenv
 import os
-import bcrypt
-import streamlit_authenticator as stauth
 from psycopg2.errors import DuplicateTable
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -17,8 +15,6 @@ def conectar_db():
         os.getenv("DATABASE_URL"),
         cursor_factory=RealDictCursor
     )
-
-
 
 
 def inicializar_db():

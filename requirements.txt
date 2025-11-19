@@ -1,19 +1,35 @@
 streamlit
 python-dotenv
-PyMuPDF
-PyPDF2
+# Leitura de PDF
+pypdf # Alternativa/Complemento ao PyPDF2
+PyMuPDF # Usado para 'fitz'
+# PyPDF2 # Incluído acima
+
+# Dependências do LangChain (importante que estejam listadas)
 langchain
-langchain-google-genai
-langchain-community
 langchain-core
+langchain-community 
+langchain-google-genai
+# Ferramentas
 google-auth
+google-search-results # Para o GoogleSerperAPIWrapper (Serper)
+
+# Autenticação e Interface
 streamlit-authenticator
 bcrypt
+
+# Vetorização e RAG
 faiss-cpu
-pymongo
-dnspython
-tinydb
+# O nest_asyncio é crucial para rodar loaders como o AsyncChromiumLoader no Streamlit
 nest_asyncio
-psycopg2-binary
+
+# Banco de Dados (MongoDB)
+pymongo
+dnspython # Necessário para conexões MongoDB Atlas (URI srv)
+# tinydb # Manter apenas se você o usar em 'utils.py' ou 'pages/Login.py'
+
+# Web Scraping
 playwright
 beautifulsoup4
+# Para o Playwright funcionar, você precisa do comando de instalação de browsers no Render
+# No seu build command: python -m playwright install --with-deps chromium

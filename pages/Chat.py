@@ -57,7 +57,7 @@ def get_pdf_text(pdf_paths):
     return text
 
 def get_text_chunks(text):
-    splitter = CharacterTextSplitter(separator="\n", chunk_size=1000, chunk_overlap=200, length_function=len)
+    splitter = CharacterTextSplitter(separator="\n", chunk_size=700, chunk_overlap=200, length_function=len)
     return splitter.split_text(text)
 
 def get_vectorstore(chunks):
@@ -66,7 +66,6 @@ def get_vectorstore(chunks):
     except Exception as e:
         tratar_erro_api("Google Embeddings", e)
         st.stop()
-
     return FAISS.from_texts(chunks, embedding=embeddings)
 
 def carregar_vectorstore_default():
@@ -150,7 +149,6 @@ def criar_chain(vectorstore, mensagens_anteriores=None):
     except Exception as e:
         tratar_erro_api("Gemini", e)
         st.stop()
-
     
     memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
     if mensagens_anteriores:
@@ -179,8 +177,6 @@ def criar_query_de_busca(pergunta: str) -> str:
     except Exception as e:
         tratar_erro_api("Gemini", e)
         st.stop()
-
-    
     template = """
     Sua tarefa é extrair as palavras-chave essenciais da "Pergunta do Usuário" para realizar uma busca eficiente na internet.
     Adicione "CEFET-MG" 
@@ -220,7 +216,7 @@ def extrair_e_resumir_web(llm, resultados_busca: list[dict], pergunta: str):
     if not html_docs:
         return None
     bs_transformer = BeautifulSoupTransformer()
-    docs_transformados = bs_transformer.transform_documents(html_docs, tags_to_extract=["p","h1","h2","h3","li","span","div"])
+    docs_transformados = bs_transformer.transform_documents(html_docs, tags_to_extract=["p","h1","h2","h3","li","span","div","link", "a"])
     docs_validos = [doc for doc in docs_transformados if doc.page_content.strip()]
     if not docs_validos:
         return None
@@ -246,6 +242,8 @@ Você é um assistente de pesquisa especialista. Analise o 'Contexto da Web' par
 # -----------------------------
 # Estado inicial e autenticação
 # -----------------------------
+
+
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "chain" not in st.session_state:
@@ -262,13 +260,11 @@ if "auth_status" not in st.session_state or not st.session_state.auth_status:
         if st.button("🔐 Login"):
             st.switch_page("pages/Login.py")
     st.stop()
-
+    
 username = st.session_state.username
+
 st.title("🎓 CEFET-MG - Assistente Virtual")
 
-# -----------------------------
-# Sidebar: PDFs + chats salvos
-# -----------------------------
 with st.sidebar:
     st.subheader("📌 Envie seus PDFs")
     pdf_docs = st.file_uploader("Carregue PDFs", accept_multiple_files=True)
@@ -305,7 +301,7 @@ with st.sidebar:
         st.session_state.chat_name = ""
         st.success("Novo chat iniciado.")
 
-    # Chats salvos
+
     st.subheader("📅 Seus chats salvos")
     chats = listar_chats(username)
     if chats:
@@ -335,6 +331,7 @@ with st.sidebar:
 # -----------------------------
 # Inicialização da Chain padrão
 # -----------------------------
+
 if st.session_state.chain is None:
     with st.spinner("Carregando base padrão..."):
         vectorstore = carregar_vectorstore_default()
@@ -344,6 +341,7 @@ if st.session_state.chain is None:
 # -----------------------------
 # Histórico de chat
 # -----------------------------
+
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
@@ -351,19 +349,12 @@ for msg in st.session_state.messages:
 # -----------------------------
 # Interação principal
 # -----------------------------
-# Interação principal
-GATILHOS_FALLBACK = [
-    "não encontrei",
-    "não há menção",
-    "não tem menção",
-    "não achei",
-    "não vi informação",
-    "não encontrei informações",
-    "não consta",
-    "não há registro",
-    "no material nao tem informações",
-    "Parece que houve um engano"
 
+GATILHOS_FALLBACK = [
+    "não encontrei", "não há menção", "não tem menção",   "não achei",  "não vi informação",  
+    "não encontrei informações", "não consta", "não há registro", "no material não tem informações",
+    "Parece que houve um engano", "não sei a data", "não tem no material", "não sei",
+    "não tem material", "não achei no pdf",
 ]
 
 if user_input := st.chat_input("Digite sua pergunta"):
@@ -382,20 +373,17 @@ if user_input := st.chat_input("Digite sua pergunta"):
 
         final_bot_msg = rag_response
 
-       
-
         if (
             (not st.session_state.pdf_paths or len(st.session_state.pdf_paths) == 0)
             and any(trigger in rag_response.lower() for trigger in GATILHOS_FALLBACK)
         ):
-            with st.spinner("Buscando na web... 🔎"):
+            with st.spinner("Buscando na web..."):
                 query_web = criar_query_de_busca(user_input)
                 st.info(f"**Buscando por:** {query_web}")
 
                 resultados_web = buscar_serper(query_web, max_results=4)
 
                 if resultados_web:
-                    # Mostrar os 4 links principais
                     st.markdown("**🔗 Principais resultados encontrados:**")
                     for r in resultados_web:
                         st.markdown(f"- [{r['title']}]({r['link']})")
@@ -408,7 +396,7 @@ if user_input := st.chat_input("Digite sua pergunta"):
                         st.stop()
 
 
-                    st.info("🕵️‍♀️ Coletando informações completas dos sites encontrados... Por favor, aguarde alguns minutos")
+                    st.info("Coletando informações completas dos sites encontrados... Por favor, aguarde alguns minutos")
                     resumo_web = extrair_e_resumir_web(llm_web, resultados_web, user_input)
 
 
@@ -436,3 +424,6 @@ if user_input := st.chat_input("Digite sua pergunta"):
         messages=st.session_state.messages,
         pdf_paths=st.session_state.get("pdf_paths", [])
     )
+
+
+
