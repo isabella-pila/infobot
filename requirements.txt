@@ -1,7 +1,8 @@
 streamlit
 python-dotenv
 # Leitura de PDF
-pypdf # Alternativa/Complemento ao PyPDF2
+pypdf
+PyPDF2 # Alternativa/Complemento ao PyPDF2
 PyMuPDF # Usado para 'fitz'
 # PyPDF2 # Incluído acima
 
