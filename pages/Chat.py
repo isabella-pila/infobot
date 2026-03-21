@@ -21,6 +21,7 @@ from chat_db import salvar_chat, listar_chats, carregar_chat, delete_chat
 from langchain_community.utilities import GoogleSerperAPIWrapper
 from langchain.text_splitter import CharacterTextSplitter
 from utils import tratar_erro_api
+from langchain_groq import ChatGroq
 
 # -----------------------------
 # Inicialização
@@ -31,10 +32,11 @@ if sys.platform == 'win32':
 load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 SERPER_API_KEY = os.getenv("SERPER_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 st.set_page_config(page_title="Assistente CEFET-MG", page_icon="✨")
 
-if not GOOGLE_API_KEY or not SERPER_API_KEY:
+if not GROQ_API_KEY or not SERPER_API_KEY:
     st.error("Chaves de API não encontradas. Verifique seu arquivo .env.")
     st.stop()
 
@@ -76,13 +78,15 @@ def carregar_vectorstore_default():
     with fitz.open(path) as doc:
         text = "".join(page.get_text("text") for page in doc)
     document = Document(page_content=text, metadata={"source": path})
+    chunks = get_text_chunks(text)
     
     try:
         embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-2-preview", google_api_key=GOOGLE_API_KEY)
     except Exception as e:
         tratar_erro_api("Google Embeddings", e)
         st.stop()
-    return FAISS.from_documents([document], embeddings)
+
+    return FAISS.from_texts(chunks, embedding=embeddings)
 
 # -----------------------------
 # RAG Prompts
@@ -145,7 +149,11 @@ Pergunta independente:"""
 
 def criar_chain(vectorstore, mensagens_anteriores=None):
     try:
-        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", temperature=0.7, google_api_key=GOOGLE_API_KEY)
+       llm = ChatGroq(
+            model="llama-3.3-70b-versatile", 
+            temperature=0.7, 
+            groq_api_key=GROQ_API_KEY
+        )
     except Exception as e:
         tratar_erro_api("Gemini", e)
         st.stop()
@@ -173,7 +181,11 @@ def criar_chain(vectorstore, mensagens_anteriores=None):
 # -----------------------------
 def criar_query_de_busca(pergunta: str) -> str:
     try:
-     llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", temperature=0.1, google_api_key=GOOGLE_API_KEY)
+     llm = ChatGroq(
+            model="llama-3.3-70b-versatile", 
+            temperature=0.1, 
+            groq_api_key=GROQ_API_KEY
+        )
     except Exception as e:
         tratar_erro_api("Gemini", e)
         st.stop()
@@ -243,7 +255,6 @@ Você é um assistente de pesquisa especialista. Analise o 'Contexto da Web' par
 # Estado inicial e autenticação
 # -----------------------------
 
-
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "chain" not in st.session_state:
@@ -295,11 +306,18 @@ with st.sidebar:
             st.success("Base carregada!")
 
     if st.button("🧹 Novo chat"):
+        # Limpa tudo no estado da sessão
         st.session_state.messages = []
         st.session_state.chain = None
         st.session_state.pdf_paths = None
         st.session_state.chat_name = ""
-        st.success("Novo chat iniciado.")
+        
+        # Opcional: Recarregar a chain padrão imediatamente para não dar erro no próximo prompt
+        vectorstore_default = carregar_vectorstore_default()
+        if vectorstore_default:
+            st.session_state.chain = criar_chain(vectorstore_default)
+            
+        st.rerun() # Isso limpa a interface instantaneamente
 
 
     st.subheader("📅 Seus chats salvos")
@@ -391,7 +409,11 @@ if user_input := st.chat_input("Digite sua pergunta"):
 
 
                     try:
-                        llm_web = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", temperature=0.4, google_api_key=GOOGLE_API_KEY)
+                        llm_web = ChatGroq(
+                                model="llama-3.3-70b-versatile", 
+                                temperature=0.7, 
+                                groq_api_key=GROQ_API_KEY
+                            )
                     except Exception as e:
                         tratar_erro_api("Gemini", e)
                         st.stop()

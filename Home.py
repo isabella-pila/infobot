@@ -7,6 +7,7 @@ from langchain_core.documents import Document
 from langchain_core.runnables import RunnablePassthrough
 import fitz
 import os
+from langchain_groq import ChatGroq
 
 st.set_page_config(page_title="CEFET - Chat sobre o Cefet", page_icon="🎓")
 
@@ -20,7 +21,11 @@ with col1:
 # Carrega as variáveis de ambiente
 _ = load_dotenv(find_dotenv())
 
-model = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite")
+model = ChatGroq(
+            model="llama-3.3-70b-versatile", 
+            temperature=0.7, 
+            groq_api_key=GROQ_API_KEY
+        )
 
 def extrai_texto_para_pdf(pdf_path):
     text = ""

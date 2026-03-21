@@ -13,6 +13,7 @@ def tratar_erro_api(api_nome: str, erro: Exception):
 
     if "quota" in erro_str or "rate limit" in erro_str:
         st.error(f"🚫 Limite de uso da API {api_nome} atingido. Tente novamente mais tarde.")
+    
     elif "invalid api key" in erro_str or "unauthorized" in erro_str:
         st.error(f"🔑 Chave de API {api_nome} inválida ou expirada.")
     elif "timeout" in erro_str:
