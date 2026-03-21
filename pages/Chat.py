@@ -62,7 +62,7 @@ def get_text_chunks(text):
 
 def get_vectorstore(chunks):
     try:
-     embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004", google_api_key=GOOGLE_API_KEY)
+     embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-2-preview", google_api_key=GOOGLE_API_KEY)
     except Exception as e:
         tratar_erro_api("Google Embeddings", e)
         st.stop()
@@ -78,7 +78,7 @@ def carregar_vectorstore_default():
     document = Document(page_content=text, metadata={"source": path})
     
     try:
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004", google_api_key=GOOGLE_API_KEY)
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-2-preview", google_api_key=GOOGLE_API_KEY)
     except Exception as e:
         tratar_erro_api("Google Embeddings", e)
         st.stop()
@@ -145,7 +145,7 @@ Pergunta independente:"""
 
 def criar_chain(vectorstore, mensagens_anteriores=None):
     try:
-        llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.7, google_api_key=GOOGLE_API_KEY)
+        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", temperature=0.7, google_api_key=GOOGLE_API_KEY)
     except Exception as e:
         tratar_erro_api("Gemini", e)
         st.stop()
@@ -173,7 +173,7 @@ def criar_chain(vectorstore, mensagens_anteriores=None):
 # -----------------------------
 def criar_query_de_busca(pergunta: str) -> str:
     try:
-     llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.1, google_api_key=GOOGLE_API_KEY)
+     llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", temperature=0.1, google_api_key=GOOGLE_API_KEY)
     except Exception as e:
         tratar_erro_api("Gemini", e)
         st.stop()
@@ -328,6 +328,7 @@ with st.sidebar:
             st.session_state.chat_name = ""
             st.success("Chat apagado com sucesso!")
 
+
 # -----------------------------
 # Inicialização da Chain padrão
 # -----------------------------
@@ -354,7 +355,7 @@ GATILHOS_FALLBACK = [
     "não encontrei", "não há menção", "não tem menção",   "não achei",  "não vi informação",  
     "não encontrei informações", "não consta", "não há registro", "no material não tem informações",
     "Parece que houve um engano", "não sei a data", "não tem no material", "não sei",
-    "não tem material", "não achei no pdf",
+    "não tem material", "não achei no pdf","o material que você me enviou não traz nenhuma informação"
 ]
 
 if user_input := st.chat_input("Digite sua pergunta"):
@@ -390,7 +391,7 @@ if user_input := st.chat_input("Digite sua pergunta"):
 
 
                     try:
-                        llm_web = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.4, google_api_key=GOOGLE_API_KEY)
+                        llm_web = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", temperature=0.4, google_api_key=GOOGLE_API_KEY)
                     except Exception as e:
                         tratar_erro_api("Gemini", e)
                         st.stop()
