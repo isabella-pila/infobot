@@ -9,7 +9,11 @@ import fitz
 import os
 from langchain_groq import ChatGroq
 
+load_dotenv(find_dotenv())
+
 st.set_page_config(page_title="CEFET - Chat sobre o Cefet", page_icon="🎓")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+groq_api_key = os.getenv("GROQ_API_KEY")
 
 # Botões no topo
 col1, col2 = st.columns([1, 1])
@@ -20,13 +24,18 @@ with col1:
 
 # Carrega as variáveis de ambiente
 _ = load_dotenv(find_dotenv())
-
 model = ChatGroq(
-            model="llama-3.3-70b-versatile", 
-            temperature=0.7, 
-            groq_api_key=GROQ_API_KEY
-        )
+    model="Llama-3.3-70B-Versatile", 
+    temperature=0.7, 
+    api_key=groq_api_key            )
 
+
+"""model = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash", 
+            temperature=0.7, 
+            google_api_key=GOOGLE_API_KEY
+        )
+"""
 def extrai_texto_para_pdf(pdf_path):
     text = ""
     doc = fitz.open(pdf_path)
