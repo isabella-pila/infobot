@@ -9,10 +9,10 @@ nest_asyncio
 psycopg2-binary
 
 # Dependências do LangChain (importante que estejam listadas)
-langchain==0.1.20 
-langchain-google-genai==0.0.11
-langchain-community==0.0.38
-langchain-core==0.1.52
+langchain 
+langchain-google-genai
+langchain-community
+langchain-core
 # Ferramentas
 google-auth
 google-search-results # Para o GoogleSerperAPIWrapper (Serper)
@@ -36,3 +36,6 @@ playwright
 beautifulsoup4
 # Para o Playwright funcionar, você precisa do comando de instalação de browsers no Render
 # No seu build command: python -m playwright install --with-deps chromium
+
+
+langgraph
