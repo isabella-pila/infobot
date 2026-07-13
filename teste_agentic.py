@@ -13,7 +13,7 @@ Como usar:
 """
 
 import time
-from rag_core import carregar_vectorstore_default, pesquisar_na_web
+from rag_core import carregar_vectorstore_default, pesquisar_na_web_estruturado
 from agentic_rag_langgraph import construir_grafo, responder_com_rag_agentico
 
 # Free tier do Gemini (gemini-2.5-flash-lite) = 10 requisições/minuto.
@@ -23,9 +23,7 @@ from agentic_rag_langgraph import construir_grafo, responder_com_rag_agentico
 PAUSA_ENTRE_PERGUNTAS_SEGUNDOS = 45
 
 PERGUNTAS_TESTE = [
-    "Qual é a carga horária do TCC?",              # simples -> deve ir direto pro Sintetizador
-    "Como o curso evolui ao longo dos períodos?",   # multi-etapa -> Planejador deve decompor
-    "Quais eventos estão acontecendo agora no CEFET-MG?",  # fora da base -> deve cair no fallback web
+    "Qual é a duração mínima para se formar em SI?",              # simples -> deve ir direto pro Sintetizador
 ]
 
 if __name__ == "__main__":
@@ -33,7 +31,7 @@ if __name__ == "__main__":
     vectorstore = carregar_vectorstore_default()
 
     print("Montando grafo multi-agente...")
-    grafo = construir_grafo(vectorstore, pesquisar_na_web)
+    grafo = construir_grafo(vectorstore, pesquisar_na_web_estruturado)
 
     # (Opcional) gera o diagrama Mermaid do grafo — ótimo para a Figura do Artigo 2
     try:

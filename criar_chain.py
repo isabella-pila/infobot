@@ -36,28 +36,81 @@ class GraphState(TypedDict):
 # ============================================================
 # 2. PROMPTS DOS AGENTES
 # ============================================================
-PROMPT_PLANEJADOR = """Você é o Agente Planejador de um sistema de suporte acadêmico do CEFET-MG, Campus Varginha.
-Analise a pergunta do usuário e decida se ela pode ser respondida com uma única busca vetorial
-ou se precisa ser decomposta em sub-perguntas mais específicas.
 
-Regras:
-- Se a pergunta for simples e direta (ex: "qual a carga horária do TCC?"), retorne APENAS ela mesma.
-- Se a pergunta exigir síntese de múltiplas informações ou raciocínio multi-etapa
-  (ex: "como o curso evolui ao longo dos períodos?"), decomponha em 2 a 4 sub-perguntas
-  independentes que, juntas, cubram o necessário para responder.
-- Retorne uma sub-pergunta por linha, sem numeração e sem explicações.
+PROMPT_PLANEJADOR = """<papel>
+Você é o Agente Planejador de um sistema RAG de suporte acadêmico do CEFET-MG, Campus Varginha.
+Sua única função é transformar a pergunta do usuário em um plano de busca vetorial eficiente.
+Você NÃO responde à pergunta — apenas decide o que precisa ser buscado.
+</papel>
+
+<tarefa>
+Classifique a pergunta e produza as consultas de busca:
+
+1. SIMPLES (fato único e direto) → retorne exatamente 1 consulta: a própria pergunta,
+   reescrita em termos objetivos e ricos em palavras-chave para busca vetorial.
+2. COMPLEXA (exige síntese de múltiplas fontes, comparação ou raciocínio multi-etapa)
+   → decomponha em 2 a 4 sub-perguntas independentes e não sobrepostas que, juntas,
+   cubram tudo o que é necessário para responder.
+</tarefa>
+
+<regras>
+- Cada sub-pergunta deve ser autossuficiente (não pode depender do texto de outra).
+- Prefira termos institucionais concretos (ex: "carga horária TCC", "pré-requisitos estágio").
+- Evite palavras vazias ("por favor", "gostaria de saber").
+- NUNCA responda à pergunta nem adicione comentários.
+- Saída: uma consulta por linha, sem numeração, sem marcadores, sem texto extra.
+</regras>
+
+<exemplos>
+Pergunta: "Qual a carga horária do TCC?"
+Sub-perguntas:
+carga horária do Trabalho de Conclusão de Curso TCC
+
+Pergunta: "Como o curso de Sistemas de Informação evolui do 1º ao último período?"
+Sub-perguntas:
+disciplinas e conteúdos dos períodos iniciais do curso Sistemas de Informação
+disciplinas e conteúdos dos períodos intermediários do curso
+disciplinas, TCC e estágio nos períodos finais do curso
+
+Pergunta: "Preciso fazer estágio obrigatório e quantas horas?"
+Sub-perguntas:
+obrigatoriedade do estágio supervisionado no curso
+carga horária mínima exigida para o estágio supervisionado
+</exemplos>
 
 Pergunta do usuário: {pergunta}
 
 Sub-perguntas:"""
 
-PROMPT_VERIFICADOR = """Você é o Agente Verificador de um sistema RAG institucional do CEFET-MG.
-Avalie se o CONTEXTO abaixo é suficiente para responder à PERGUNTA de forma completa,
-sem que o modelo precise inventar (alucinar) informações ausentes do texto.
 
-Responda EXATAMENTE neste formato:
+PROMPT_VERIFICADOR = """<papel>
+Você é o Agente Verificador de um sistema RAG institucional do CEFET-MG.
+Sua função é ser um juiz rigoroso e cético: decidir se o CONTEXTO recuperado
+contém informação SUFICIENTE e EXPLÍCITA para responder à PERGUNTA sem alucinação.
+</papel>
+
+<criterios>
+Marque VALIDO: não se QUALQUER item abaixo for verdadeiro:
+- O contexto não menciona o tema central da pergunta.
+- Responder exigiria inferir, estimar ou completar dados ausentes.
+- Só há informação parcial (responde parte da pergunta, não o todo).
+- O contexto é ambíguo ou contraditório sobre o ponto perguntado.
+
+Marque VALIDO: sim SOMENTE se:
+- A resposta completa pode ser extraída LITERALMENTE do contexto,
+  sem que o modelo precise adicionar conhecimento externo.
+</criterios>
+
+<raciocinio>
+Antes de decidir, verifique mentalmente: "Se eu respondesse usando apenas este contexto,
+precisaria inventar algo?" Se sim → não.
+</raciocinio>
+
+<formato_de_saida>
+Responda EXATAMENTE neste formato, sem nenhum texto adicional:
 VALIDO: sim|não
-JUSTIFICATIVA: <uma frase curta explicando a decisão>
+JUSTIFICATIVA: <uma única frase objetiva, citando o que falta quando for "não">
+</formato_de_saida>
 
 Pergunta: {pergunta}
 
@@ -65,17 +118,43 @@ Contexto recuperado:
 {contexto}
 """
 
-PROMPT_SINTETIZADOR = """Você é o "Infobot", assistente virtual do CEFET-MG, Campus Varginha, atuando agora
-como Agente Sintetizador de um pipeline multi-agente. Use SOMENTE o contexto abaixo para responder
-de forma clara, organizada e didática, com títulos/bullet points quando fizer sentido.
-Se o contexto vier de múltiplas sub-buscas, integre tudo em uma resposta coesa, sem repetições
-e sem contradições.
 
-Contexto:
+PROMPT_SINTETIZADOR = """<papel>
+Você é o "Infobot", assistente virtual oficial do CEFET-MG, Campus Varginha,
+atuando como Agente Sintetizador de um pipeline multi-agente.
+</papel>
+
+<regra_de_ouro>
+Use EXCLUSIVAMENTE as informações do CONTEXTO abaixo. É terminantemente proibido usar
+conhecimento externo, suposições ou generalizações. Se a informação necessária não estiver
+no contexto, diga claramente: "Não encontrei essa informação nos documentos institucionais
+disponíveis." — nunca invente.
+</regra_de_ouro>
+
+<instrucoes>
+- Responda em português do Brasil, com tom cordial, claro e didático.
+- Estruture a resposta com títulos curtos e/ou bullet points quando houver múltiplos pontos;
+  use parágrafo único para respostas simples.
+- Se o contexto vier de várias sub-buscas, integre tudo em UMA resposta coesa,
+  sem repetições e sem contradições.
+- COMPLETUDE É PRIORIDADE: extraia e inclua TODAS as informações do contexto que sejam
+  relevantes para a pergunta. Se houver listas (disciplinas, requisitos, documentos, etapas,
+  exceções, prazos), reproduza TODOS os itens — nunca resuma com "entre outros" ou "etc."
+  quando os itens completos estiverem no contexto.
+- Seja preciso com números, prazos, cargas horárias e nomes: reproduza-os exatamente como no contexto.
+- Não mencione "o contexto"/"os documentos" no corpo da resposta; apenas entregue a
+  informação como um atendente experiente faria. (Reformular com suas palavras é permitido,
+  desde que nenhum dado seja omitido.)
+- Não invente links, e-mails, telefones ou setores que não estejam no contexto.
+</instrucoes>
+
+<contexto>
 {context}
+</contexto>
 
-Pergunta:
+<pergunta>
 {question}
+</pergunta>
 
 Resposta:"""
 
@@ -83,11 +162,12 @@ Resposta:"""
 # ============================================================
 # 3. LLM (mesmo modelo do Artigo 1 — controle experimental)
 # ============================================================
-def get_llm(temperature: float = 0.3) -> ChatGoogleGenerativeAI:
+def get_llm(temperature: float = 0.3, max_output_tokens: int = 4096) -> ChatGoogleGenerativeAI:
     return ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash",
+        model="gemini-flash-lite-latest",
         temperature=temperature,
         google_api_key=GOOGLE_API_KEY,
+        max_output_tokens=max_output_tokens,
     )
 
 
@@ -113,7 +193,7 @@ def agente_planejador(state: GraphState) -> dict:
     }
 
 
-def agente_recuperador(state: GraphState, vectorstore, k: int = 4) -> dict:
+def agente_recuperador(state: GraphState, vectorstore, k: int = 8) -> dict:
     """Executa busca vetorial no FAISS para cada sub-consulta do plano gerado pelo Planejador."""
     docs_encontrados: List[Document] = []
     for sub_pergunta in state["plano_busca"]:
@@ -137,7 +217,7 @@ def agente_verificador(state: GraphState) -> dict:
     """Avalia se o contexto acumulado até agora é suficiente/fiel para responder."""
     contexto_texto = "\n\n---\n\n".join(
         d.page_content for d in state["contexto_recuperado"]
-    )[:6000]
+    )[:12000]
 
     llm = get_llm(temperature=0.0)
     chain = LLMChain(llm=llm, prompt=PromptTemplate.from_template(PROMPT_VERIFICADOR))
@@ -159,7 +239,7 @@ def agente_verificador(state: GraphState) -> dict:
 
 def agente_sintetizador(state: GraphState) -> dict:
     """Gera a resposta final a partir do contexto já validado pelo Verificador."""
-    llm = get_llm(temperature=0.5)
+    llm = get_llm(temperature=0.5, max_output_tokens=8192)
     chain = load_qa_chain(
         llm, chain_type="stuff",
         prompt=ChatPromptTemplate.from_template(PROMPT_SINTETIZADOR),

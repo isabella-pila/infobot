@@ -19,7 +19,7 @@ from langchain.chains.question_answering import load_qa_chain
 from langchain.memory import ConversationBufferMemory
 from chat_db import salvar_chat, listar_chats, carregar_chat, delete_chat
 from langchain_community.utilities import GoogleSerperAPIWrapper
-from langchain.text_splitter import CharacterTextSplitter
+from langchain.text_splitter import CharacterTextSplitter, RecursiveCharacterTextSplitter
 from utils import tratar_erro_api
 from langchain_openai import ChatOpenAI
 
@@ -61,8 +61,13 @@ def get_pdf_text(pdf_paths):
 
 
 def get_text_chunks(text):
-    splitter = CharacterTextSplitter(
-        separator="\n", chunk_size=700, chunk_overlap=200, length_function=len
+    # RecursiveCharacterTextSplitter + chunk maior evita partir listas/tabelas
+    # (ex: disciplinas de um período) no meio, o que cortava informação na resposta.
+    splitter = RecursiveCharacterTextSplitter(
+        separators=["\n\n", "\n", ". ", " ", ""],
+        chunk_size=1500,
+        chunk_overlap=300,
+        length_function=len,
     )
     return splitter.split_text(text)
 
@@ -210,7 +215,7 @@ def criar_chain(vectorstore, mensagens_anteriores=None):
     )
 
     return ConversationalRetrievalChain(
-        retriever=vectorstore.as_retriever(),
+        retriever=vectorstore.as_retriever(search_kwargs={"k": 6}),
         combine_docs_chain=combine_docs_chain,
         question_generator=question_generator,
         memory=memory,

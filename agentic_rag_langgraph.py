@@ -44,6 +44,7 @@ class GraphState(TypedDict):
     # Verificador manda recuperar de novo.
     contexto_recuperado: Annotated[Sequence[Document], operator.add]
     contexto_valido: bool
+    score_relevancia: int
     justificativa_verificacao: str
     resposta_final: str
     fontes: List[str]
@@ -72,11 +73,15 @@ Pergunta do usuário: {pergunta}
 Sub-perguntas:"""
 
 PROMPT_VERIFICADOR = """Você é o Agente Verificador de um sistema RAG institucional do CEFET-MG.
-Avalie se o CONTEXTO abaixo é suficiente para responder à PERGUNTA de forma completa,
-sem que o modelo precise inventar (alucinar) informações ausentes do texto.
+Avalie O QUANTO o CONTEXTO abaixo ajuda a responder à PERGUNTA, sem que o modelo precise
+inventar (alucinar) informações ausentes do texto. Atribua uma NOTA DE RELEVÂNCIA:
+
+- 2 = suficiente para responder de forma completa e fiel.
+- 1 = parcialmente relevante (cobre parte da pergunta, mas não tudo).
+- 0 = irrelevante (o contexto não ajuda a responder a pergunta).
 
 Responda EXATAMENTE neste formato:
-VALIDO: sim|não
+RELEVANCIA: 0|1|2
 JUSTIFICATIVA: <uma frase curta explicando a decisão>
 
 Pergunta: {pergunta}
@@ -86,10 +91,15 @@ Contexto recuperado:
 """
 
 PROMPT_SINTETIZADOR = """Você é o "Infobot", assistente virtual do CEFET-MG, Campus Varginha, atuando agora
-como Agente Sintetizador de um pipeline multi-agente. Use SOMENTE o contexto abaixo para responder
+como Agente Sintetizador de um pipeline multi-agente.  Use SOMENTE o contexto abaixo para responder
 de forma clara, organizada e didática, com títulos/bullet points quando fizer sentido.
 Se o contexto vier de múltiplas sub-buscas, integre tudo em uma resposta coesa, sem repetições
 e sem contradições.
+
+COMPLETUDE É PRIORIDADE: extraia e inclua TODAS as informações do contexto que sejam relevantes
+para a pergunta. Se houver listas (disciplinas, requisitos, documentos, etapas, prazos, exceções),
+reproduza TODOS os itens presentes no contexto — nunca corte com "entre outros" ou "etc.".
+Seja preciso com números, prazos, cargas horárias e nomes, reproduzindo-os exatamente.
 
 Contexto:
 {context}
@@ -103,11 +113,12 @@ Resposta:"""
 # ============================================================
 # 3. LLM (mesmo modelo do Artigo 1 — controle experimental)
 # ============================================================
-def get_llm(temperature: float = 0.3) -> ChatGoogleGenerativeAI:
+def get_llm(temperature: float = 0.3, max_output_tokens: int = 4096) -> ChatGoogleGenerativeAI:
     return ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash",
+        model="gemini-flash-lite-latest",
         temperature=temperature,
         google_api_key=GOOGLE_API_KEY,
+        max_output_tokens=max_output_tokens,
     )
 
 
@@ -133,23 +144,39 @@ def agente_planejador(state: GraphState) -> dict:
     }
 
 
-def agente_recuperador(state: GraphState, vectorstore, k: int = 4) -> dict:
-    """Executa busca vetorial no FAISS para cada sub-consulta do plano gerado pelo Planejador."""
+def agente_recuperador(state: GraphState, vectorstore, k_base: int = 8) -> dict:
+    """Executa busca vetorial no FAISS para cada sub-consulta do plano gerado pelo Planejador.
+
+    (A) Em re-tentativas (quando o Verificador reprovou o contexto), o grafo volta para
+    ESTE nó — não para o Planejador. Para que a nova passagem traga chunks REALMENTE
+    novos, o `k` cresce a cada iteração e a pergunta original é adicionada às consultas.
+    """
+    iteracao = state.get("iteracoes_verificacao", 0)
+    k = k_base + 6 * iteracao  # 8 -> 14 -> 20 ... a cada reprovação do Verificador
+
+    consultas = list(state["plano_busca"])
+    if iteracao > 0 and state.get("pergunta_original"):
+        # Na retentativa, busca também pela pergunta original inteira (query mais ampla).
+        consultas.append(state["pergunta_original"])
+
     docs_encontrados: List[Document] = []
-    for sub_pergunta in state["plano_busca"]:
+    for sub_pergunta in consultas:
         try:
             docs_encontrados.extend(vectorstore.similarity_search(sub_pergunta, k=k))
         except Exception as e:
             print(f"[Recuperador] erro na busca '{sub_pergunta}': {e}")
 
-    # Remove duplicatas (mesmo chunk pode ser recuperado por sub-perguntas diferentes)
-    vistos, docs_unicos = set(), []
+    # Remove duplicatas, inclusive contra o que JÁ foi acumulado em passagens anteriores
+    # (contexto_recuperado usa operator.add), para só adicionar chunks inéditos.
+    vistos = {d.page_content[:200] for d in state.get("contexto_recuperado", [])}
+    docs_unicos = []
     for d in docs_encontrados:
         chave = d.page_content[:200]
         if chave not in vistos:
             vistos.add(chave)
             docs_unicos.append(d)
 
+    print(f"[Recuperador] iteracao={iteracao} k={k} novos_chunks={len(docs_unicos)}")
     return {"contexto_recuperado": docs_unicos}
 
 
@@ -157,7 +184,7 @@ def agente_verificador(state: GraphState) -> dict:
     """Avalia se o contexto acumulado até agora é suficiente/fiel para responder."""
     contexto_texto = "\n\n---\n\n".join(
         d.page_content for d in state["contexto_recuperado"]
-    )[:6000]
+    )[:12000]
 
     llm = get_llm(temperature=0.0)
     chain = LLMChain(llm=llm, prompt=PromptTemplate.from_template(PROMPT_VERIFICADOR))
@@ -167,11 +194,13 @@ def agente_verificador(state: GraphState) -> dict:
     })
     texto = resultado.get("text", "")
 
-    valido = bool(re.search(r"VALIDO:\s*sim", texto, re.IGNORECASE))
+    m_score = re.search(r"RELEVANCIA:\s*([012])", texto, re.IGNORECASE)
+    score = int(m_score.group(1)) if m_score else 0
     m = re.search(r"JUSTIFICATIVA:\s*(.+)", texto, re.IGNORECASE)
 
     return {
-        "contexto_valido": valido,
+        "contexto_valido": score >= 2,
+        "score_relevancia": score,
         "justificativa_verificacao": m.group(1).strip() if m else "",
         "iteracoes_verificacao": state.get("iteracoes_verificacao", 0) + 1,
     }
@@ -179,7 +208,7 @@ def agente_verificador(state: GraphState) -> dict:
 
 def agente_sintetizador(state: GraphState) -> dict:
     """Gera a resposta final a partir do contexto já validado pelo Verificador."""
-    llm = get_llm(temperature=0.5)
+    llm = get_llm(temperature=0.5, max_output_tokens=8192)
     chain = load_qa_chain(
         llm, chain_type="stuff",
         prompt=ChatPromptTemplate.from_template(PROMPT_SINTETIZADOR),
@@ -204,14 +233,35 @@ def agente_sintetizador(state: GraphState) -> dict:
 def agente_busca_web_fallback(state: GraphState, pesquisar_na_web_fn) -> dict:
     """
     Aciona o fallback web quando, após MAX_ITERACOES_VERIFICACAO, o contexto local
-    ainda não foi validado. Reaproveita a mesma função pesquisar_na_web do Artigo 1
+    ainda é irrelevante. Reaproveita a busca web do Artigo 1
     (query inteligente -> Serper -> extração httpx -> síntese).
+
+    (C) Passa o contexto local já recuperado para uma síntese HÍBRIDA (PDF + web).
+    (D) Popula o campo `fontes` (antes ficava vazio mesmo consultando a web).
+    Aceita tanto a versão estruturada (retorna dict {resposta, fontes}) quanto a
+    versão antiga que retorna apenas string.
     """
     llm = get_llm(temperature=0.3)
-    resposta_web = pesquisar_na_web_fn(llm, state["pergunta_original"])
+    contexto_local = list(state.get("contexto_recuperado", []))
+
+    try:
+        resultado_web = pesquisar_na_web_fn(llm, state["pergunta_original"], contexto_local=contexto_local)
+    except TypeError:
+        # Compatibilidade com a assinatura antiga pesquisar_na_web(llm, pergunta)
+        resultado_web = pesquisar_na_web_fn(llm, state["pergunta_original"])
+
+    if isinstance(resultado_web, dict):
+        resposta = resultado_web.get("resposta", "")
+        fontes = resultado_web.get("fontes", [])
+    else:
+        resposta = resultado_web or ""
+        fontes = list({
+            d.metadata.get("source", "base institucional") for d in contexto_local
+        })
 
     return {
-        "resposta_final": resposta_web or "Não foi possível encontrar uma resposta confiável.",
+        "resposta_final": resposta or "Não foi possível encontrar uma resposta confiável.",
+        "fontes": fontes,
         "usou_fallback_web": True,
         "latencia_segundos": time.time() - state.get("inicio_execucao", time.time()),
     }
@@ -221,11 +271,20 @@ def agente_busca_web_fallback(state: GraphState, pesquisar_na_web_fn) -> dict:
 # 5. ROTEAMENTO CONDICIONAL
 # ============================================================
 def decidir_proximo_passo(state: GraphState) -> str:
+    # Contexto suficiente (nota 2): responde direto.
     if state["contexto_valido"]:
         return "sintetizar"
-    if state["iteracoes_verificacao"] >= MAX_ITERACOES_VERIFICACAO:
-        return "busca_web_fallback"
-    return "recuperar_novamente"
+
+    # Ainda há tentativas: busca de novo (com query expandida e k maior no recuperador).
+    if state["iteracoes_verificacao"] < MAX_ITERACOES_VERIFICACAO:
+        return "recuperar_novamente"
+
+    # Esgotou as tentativas. Se o contexto local é ao menos PARCIALMENTE relevante
+    # (nota 1), responde com o que tem em vez de recorrer à web à toa. Só cai no
+    # fallback web quando o contexto local é irrelevante (nota 0).
+    if state.get("score_relevancia", 0) >= 1:
+        return "sintetizar"
+    return "busca_web_fallback"
 
 
 # ============================================================
@@ -253,7 +312,7 @@ def construir_grafo(vectorstore, pesquisar_na_web_fn):
         decidir_proximo_passo,
         {
             "sintetizar": "sintetizador",
-            "recuperar_novamente": "planejador",
+            "recuperar_novamente": "recuperador",
             "busca_web_fallback": "busca_web_fallback",
         },
     )
@@ -279,6 +338,7 @@ def responder_com_rag_agentico(app_grafo, pergunta: str) -> dict:
         "plano_busca": [],
         "contexto_recuperado": [],
         "contexto_valido": False,
+        "score_relevancia": 0,
         "justificativa_verificacao": "",
         "resposta_final": "",
         "fontes": [],
