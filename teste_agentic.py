@@ -23,7 +23,7 @@ from agentic_rag_langgraph import construir_grafo, responder_com_rag_agentico
 PAUSA_ENTRE_PERGUNTAS_SEGUNDOS = 45
 
 PERGUNTAS_TESTE = [
-    "Qual é a duração mínima para se formar em SI?",              # simples -> deve ir direto pro Sintetizador
+    "Qual a diferença entre trancamento e cancelamento de matrícula?",
 ]
 
 if __name__ == "__main__":

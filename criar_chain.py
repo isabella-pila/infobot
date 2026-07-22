@@ -1,5 +1,3 @@
-
-
 import os
 import re
 import time
@@ -21,6 +19,7 @@ class GraphState(TypedDict):
     pergunta: str
     pergunta_original: str
     plano_busca: List[str]
+    plano_anterior: List[str]
 
     contexto_recuperado: Annotated[Sequence[Document], operator.add]
     contexto_valido: bool
@@ -58,6 +57,7 @@ Classifique a pergunta e produza as consultas de busca:
 - Prefira termos institucionais concretos (ex: "carga horária TCC", "pré-requisitos estágio").
 - Evite palavras vazias ("por favor", "gostaria de saber").
 - NUNCA responda à pergunta nem adicione comentários.
+- NÃO repita o cabeçalho "Sub-perguntas:"; escreva apenas as consultas.
 - Saída: uma consulta por linha, sem numeração, sem marcadores, sem texto extra.
 </regras>
 
@@ -83,33 +83,70 @@ Pergunta do usuário: {pergunta}
 Sub-perguntas:"""
 
 
+PROMPT_PLANEJADOR_REPLAN = """<papel>
+Você é o Agente Planejador de um sistema RAG de suporte acadêmico do CEFET-MG, Campus Varginha.
+Sua função é gerar um plano de busca vetorial. Você NÃO responde à pergunta.
+</papel>
+
+<situacao>
+Uma tentativa anterior de busca FALHOU: o contexto recuperado foi julgado insuficiente.
+O verificador apontou a seguinte lacuna:
+<lacuna>
+{justificativa}
+</lacuna>
+
+As consultas já tentadas (e que NÃO devem ser repetidas) foram:
+<consultas_anteriores>
+{plano_anterior}
+</consultas_anteriores>
+</situacao>
+
+<tarefa>
+Gere um NOVO plano de busca com 2 a 4 consultas DIFERENTES das anteriores, mais
+específicas e reformuladas com sinônimos/termos institucionais alternativos, focadas
+em cobrir exatamente a lacuna apontada acima.
+</tarefa>
+
+<regras>
+- Cada consulta deve ser autossuficiente e rica em palavras-chave.
+- NÃO repita nenhuma das consultas anteriores nem apenas troque a ordem das palavras.
+- Prefira termos institucionais concretos e variações que possam casar com outros trechos.
+- NUNCA responda à pergunta nem adicione comentários.
+- NÃO repita o cabeçalho "Sub-perguntas:"; escreva apenas as consultas.
+- Saída: uma consulta por linha, sem numeração, sem marcadores, sem texto extra.
+</regras>
+
+Pergunta do usuário: {pergunta}
+
+Sub-perguntas:"""
+
+
 PROMPT_VERIFICADOR = """<papel>
 Você é o Agente Verificador de um sistema RAG institucional do CEFET-MG.
-Sua função é ser um juiz rigoroso e cético: decidir se o CONTEXTO recuperado
+Sua função é julgar, de forma rigorosa e cética, se o CONTEXTO recuperado
 contém informação SUFICIENTE e EXPLÍCITA para responder à PERGUNTA sem alucinação.
 </papel>
 
 <criterios>
-Marque VALIDO: não se QUALQUER item abaixo for verdadeiro:
+Decida INSUFICIENTE se QUALQUER item abaixo for verdadeiro:
 - O contexto não menciona o tema central da pergunta.
 - Responder exigiria inferir, estimar ou completar dados ausentes.
 - Só há informação parcial (responde parte da pergunta, não o todo).
 - O contexto é ambíguo ou contraditório sobre o ponto perguntado.
 
-Marque VALIDO: sim SOMENTE se:
-- A resposta completa pode ser extraída LITERALMENTE do contexto,
-  sem que o modelo precise adicionar conhecimento externo.
+Decida SUFICIENTE somente se a resposta completa puder ser extraída
+diretamente do contexto, sem adicionar conhecimento externo.
 </criterios>
 
 <raciocinio>
-Antes de decidir, verifique mentalmente: "Se eu respondesse usando apenas este contexto,
-precisaria inventar algo?" Se sim → não.
+Antes de decidir, pergunte-se: "Se eu respondesse usando apenas este contexto,
+precisaria inventar ou supor algo?" Se sim, é INSUFICIENTE.
 </raciocinio>
 
 <formato_de_saida>
-Responda EXATAMENTE neste formato, sem nenhum texto adicional:
-VALIDO: sim|não
-JUSTIFICATIVA: <uma única frase objetiva, citando o que falta quando for "não">
+Responda EXATAMENTE neste formato, em duas linhas, sem nenhum texto extra:
+VEREDITO: SUFICIENTE
+JUSTIFICATIVA: <uma frase objetiva; quando INSUFICIENTE, aponte o que falta>
 </formato_de_saida>
 
 Pergunta: {pergunta}
@@ -175,21 +212,38 @@ def get_llm(temperature: float = 0.3, max_output_tokens: int = 4096) -> ChatGoog
 # 4. AGENTES (NÓS DO GRAFO)
 # ============================================================
 def agente_planejador(state: GraphState) -> dict:
-    """Decompõe a pergunta em sub-consultas quando necessário."""
+    """Decompõe a pergunta em sub-consultas. Na primeira passagem usa o prompt base;
+    em replanejamentos, usa o prompt que considera a lacuna e o plano anterior."""
     pergunta = state.get("pergunta_original") or state["pergunta"]
+    iteracoes = state.get("iteracoes_verificacao", 0)
+    plano_anterior = state.get("plano_busca", [])
 
     llm = get_llm(temperature=0.2)
-    chain = LLMChain(llm=llm, prompt=PromptTemplate.from_template(PROMPT_PLANEJADOR))
-    resultado = chain.invoke({"pergunta": pergunta})
+
+    if iteracoes > 0 and plano_anterior:
+        # Replanejamento: usa a justificativa do Verificador para diversificar a busca
+        chain = LLMChain(llm=llm, prompt=PromptTemplate.from_template(PROMPT_PLANEJADOR_REPLAN))
+        resultado = chain.invoke({
+            "pergunta": pergunta,
+            "justificativa": state.get("justificativa_verificacao", "(não especificada)"),
+            "plano_anterior": "\n".join(f"- {p}" for p in plano_anterior),
+        })
+    else:
+        chain = LLMChain(llm=llm, prompt=PromptTemplate.from_template(PROMPT_PLANEJADOR))
+        resultado = chain.invoke({"pergunta": pergunta})
+
     texto = resultado.get("text", pergunta).strip()
 
     sub_perguntas = [l.strip("-•* ").strip() for l in texto.split("\n") if l.strip()]
+    # Remove eventual cabeçalho ecoado pelo modelo
+    sub_perguntas = [s for s in sub_perguntas if s.lower() != "sub-perguntas:"]
     if not sub_perguntas:
         sub_perguntas = [pergunta]
 
     return {
         "pergunta_original": pergunta,
         "plano_busca": sub_perguntas,
+        "plano_anterior": plano_anterior,
     }
 
 
@@ -227,7 +281,7 @@ def agente_verificador(state: GraphState) -> dict:
     })
     texto = resultado.get("text", "")
 
-    valido = bool(re.search(r"VALIDO:\s*sim", texto, re.IGNORECASE))
+    valido = bool(re.search(r"VEREDITO:\s*SUFICIENTE", texto, re.IGNORECASE))
     m = re.search(r"JUSTIFICATIVA:\s*(.+)", texto, re.IGNORECASE)
 
     return {
@@ -239,7 +293,7 @@ def agente_verificador(state: GraphState) -> dict:
 
 def agente_sintetizador(state: GraphState) -> dict:
     """Gera a resposta final a partir do contexto já validado pelo Verificador."""
-    llm = get_llm(temperature=0.5, max_output_tokens=8192)
+    llm = get_llm(temperature=0.3, max_output_tokens=8192)
     chain = load_qa_chain(
         llm, chain_type="stuff",
         prompt=ChatPromptTemplate.from_template(PROMPT_SINTETIZADOR),
@@ -329,7 +383,10 @@ def construir_grafo(vectorstore, pesquisar_na_web_fn):
 # ============================================================
 def responder_com_rag_agentico(app_grafo, pergunta: str) -> dict:
     """
-    Executa o grafo para uma pergunta e retorna resposta + métricas operacionais,
+    Executa o grafo para uma pergunta e retorna resposta + métricas operacion quero it embora socoorp 
+    
+    
+    roriimd kais,
     já no formato que você vai usar para alimentar a Tabela comparativa do Artigo 2
     (mesmo padrão da Tabela 2 do Artigo 1, mas com colunas extras de iterações/latência).
     """
@@ -337,6 +394,7 @@ def responder_com_rag_agentico(app_grafo, pergunta: str) -> dict:
         "pergunta": pergunta,
         "pergunta_original": pergunta,
         "plano_busca": [],
+        "plano_anterior": [],
         "contexto_recuperado": [],
         "contexto_valido": False,
         "justificativa_verificacao": "",
@@ -358,6 +416,8 @@ def responder_com_rag_agentico(app_grafo, pergunta: str) -> dict:
         "latencia_segundos": round(resultado["latencia_segundos"], 2),
     }
 
+
+# ============================================================
+
 if __name__ == "__main__":
-   
     pass
