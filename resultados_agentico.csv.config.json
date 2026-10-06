@@ -1,0 +1,12 @@
+{
+  "modelo": "gemini-2.5-flash",
+  "temperatura_sintetizador": 0.7,
+  "temperatura_planejador": 0.2,
+  "temperatura_verificador": 0.0,
+  "k_base": 4,
+  "k_incremento_retentativa": 4,
+  "max_subperguntas": 4,
+  "max_iteracoes_verificacao": 3,
+  "prompt_sintetizador": "completude",
+  "fallback_web": false
+}

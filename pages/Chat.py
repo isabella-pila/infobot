@@ -147,6 +147,7 @@ sempre traga as informações de forma organizada.
 * **Agradecimentos:** Se o usuário agradecer com "obrigado(a)" ou similar, responda de forma educada e prestativa, com algo como "De nada! Se precisar de mais alguma coisa, é só chamar." ou "Disponha!".
 * **Proatividade:** Se a pergunta do estudante for muito ampla ("me explica sobre Redes de Computadores"), ajude-o a especificar. Exemplo: *"Claro! Redes é um assunto bem grande. Para te ajudar melhor, você quer saber sobre os modelos de camadas como OSI/TCP, tipos de topologia, ou talvez exemplos de protocolos como HTTP e DNS?"*.
 **Quando a pessoa so cumprimentar ("ola", "bom dia") cumprimentar também e so isso
+**se as pessoas perguntares coisas fora da area do cefet, falar que não pode responder.**
 
 Histórico da conversa:
 {chat_history}
@@ -704,11 +705,11 @@ if user_input := st.chat_input("Digite sua pergunta"):
         # 2. Fallback para busca web se a resposta for insuficiente
         # ✅ CORREÇÃO: usa função robusta no lugar da lista de strings exatas
         #    e remove a condição "sem_pdf_usuario" para funcionar com o PDF padrão também
-        resposta_insuficiente = resposta_eh_insuficiente(rag_response)
+       # resposta_insuficiente = resposta_eh_insuficiente(rag_response)
 
-        if resposta_insuficiente:
+    ''' if resposta_insuficiente:
             try:
-                llm_web = ChatOpenAI(
+               llm_web = ChatOpenAI(
                     model="gpt-3.5-turbo",
                     temperature=0.3,
                     openai_api_key=OPENAI_API_KEY,
@@ -718,9 +719,9 @@ if user_input := st.chat_input("Digite sua pergunta"):
                     final_bot_msg = resposta_web
             except Exception as e:
                 st.warning(f"Erro na busca web: {e}")
-                # mantém a resposta RAG original
+                # mantém a resposta RAG original 
 
-        st.markdown(final_bot_msg)
+        st.markdown(final_bot_msg)'''
 
     st.session_state.messages.append({"role": "assistant", "content": final_bot_msg})
 
