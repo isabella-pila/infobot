@@ -37,29 +37,18 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.chains import LLMChain
 from langchain.chains.question_answering import load_qa_chain
 from langgraph.graph import StateGraph, END
-
 from dotenv import load_dotenv
 
-# Carrega o .env ANTES de ler a chave. Sem isso, a chave pode vir vazia e o cliente do
-# Gemini cai nas credenciais do gcloud do computador (erro "invalid_grant").
+
 load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-
-
-def _exigir_chave():
-    if not GOOGLE_API_KEY:
-        raise RuntimeError(
-            "GOOGLE_API_KEY não encontrada. Crie um arquivo .env na pasta de execução com a "
-            "linha GOOGLE_API_KEY=sua_chave (sem aspas), ou defina a variável de ambiente."
-        )
-
 
 # ============================================================
 # CONFIGURAÇÃO DO EXPERIMENTO  (registre estes valores na Tabela I do artigo)
 # ============================================================
 # CONFIRME: deve ser EXATAMENTE o modelo usado nos resultados do Artigo 1.
 # Fixe a versão: aliases como "-latest" mudam com o tempo e prejudicam a reprodutibilidade.
-MODELO_GERADOR = "gemini-3.5-flash-lite"
+MODELO_GERADOR = "gemini-3.8-flash"
 
 # CONFIRME: temperatura de geração do Artigo 1 (o texto submetido diz 0,7).
 TEMPERATURA_SINTETIZADOR = 0.7
@@ -178,7 +167,6 @@ def _prompt_sintetizador() -> ChatPromptTemplate:
 # 3. LLM
 # ============================================================
 def get_llm(temperature: float, max_output_tokens: int = 4096) -> ChatGoogleGenerativeAI:
-    _exigir_chave()
     return ChatGoogleGenerativeAI(
         model=MODELO_GERADOR,
         temperature=temperature,
@@ -448,11 +436,8 @@ def responder_com_rag_agentico(app_grafo, pergunta: str) -> dict:
 # foi enviado ao sistema convencional.
 PERGUNTAS = [
 
-    ("f1", "Qual é a nota de corte do SiSU para Sistemas de Informação em Varginha? "),
-    ("f2", "Quantas horas de atividades complementares eu já cumpri? "),
-    ("f3", "Como funciona o TCC no curso de Engenharia Elétrica do CEFET MG? "),
-    ("f4", "Me explique como funciona o algoritmo de Dijkstra. "),
-    ("f5", "Por que o TCC do curso exige defesa em inglês? "),
+
+    ("Q18", "Qual a diferença entre trancamento e cancelamento de matrícula?"),
 
 ]
 
@@ -480,28 +465,6 @@ def configuracao_atual(extra: Optional[dict] = None) -> dict:
     return cfg
 
 
-def _cota_diaria_esgotada(erro: str) -> bool:
-    """True quando o erro 429 é de cota DIÁRIA (esperar segundos não adianta)."""
-    return ("PerDay" in erro) or ("per day" in erro.lower()) or bool(re.search(r"retry in \d+h", erro))
-
-
-def _cota_por_minuto(erro: str) -> bool:
-    return any(s in erro for s in ("429", "RESOURCE_EXHAUSTED", "quota")) and not _cota_diaria_esgotada(erro)
-
-
-def _carregar_execucoes_concluidas(caminho_saida: str) -> dict:
-    """Lê o CSV existente e devolve {(id, repeticao): linha} das execuções concluídas sem erro."""
-    concluidas = {}
-    if not os.path.exists(caminho_saida):
-        return concluidas
-    csv.field_size_limit(2**31 - 1)
-    with open(caminho_saida, newline="", encoding="utf-8-sig") as f:
-        for linha in csv.DictReader(f):
-            if not linha.get("erro") and linha.get("resposta"):
-                concluidas[(linha["id"], int(linha["repeticao"]))] = linha
-    return concluidas
-
-
 def executar_benchmark(
     app_grafo,
     perguntas=PERGUNTAS,
@@ -510,67 +473,23 @@ def executar_benchmark(
     extra_config: Optional[dict] = None,
     pausa_entre_execucoes_s: float = 0.0,
     max_tentativas: int = 3,
-    retomar: bool = True,
-    max_execucoes_novas: Optional[int] = None,
 ) -> str:
-    """Roda as perguntas (n_repeticoes vezes cada) e salva CSV + JSON da configuração.
+    """Roda todas as perguntas (n_repeticoes vezes cada) e salva CSV + JSON da configuração.
 
-    - Retomada: com retomar=True, execuções já concluídas no CSV são mantidas e só o
-      que falta (ou deu erro) é rodado. Rodar de novo no dia seguinte continua de onde parou.
-    - Cota diária da API esgotada: o script salva o progresso e PARA (não adianta esperar).
-    - Cota por minuto: espera 65 s e tenta de novo (até max_tentativas).
-    - max_execucoes_novas: limita quantas execuções novas rodar nesta chamada (útil no
-      plano gratuito, com poucas requisições por dia).
-    - Mudar a configuração (modelo, k, prompt...) entre uma chamada e outra é bloqueado,
-      para não misturar condições experimentais no mesmo CSV.
+    O CSV é regravado após cada pergunta, para não perder progresso se a API falhar.
     As colunas plano_busca, contextos e fontes são JSON (use json.loads ao ler).
     """
-    _exigir_chave()
     cfg = configuracao_atual(extra_config)
-    caminho_cfg = caminho_saida + ".config.json"
-
-    if retomar and os.path.exists(caminho_cfg) and os.path.exists(caminho_saida):
-        with open(caminho_cfg, encoding="utf-8") as f:
-            cfg_anterior = json.load(f)
-        if cfg_anterior != cfg:
-            raise ValueError(
-                "A configuração mudou desde a execução anterior deste CSV. "
-                "Apague o CSV (e o .config.json) para recomeçar, ou use outro caminho_saida.\n"
-                f"Anterior: {cfg_anterior}\nAtual:    {cfg}"
-            )
-
     print("Configuração:", json.dumps(cfg, ensure_ascii=False))
-    with open(caminho_cfg, "w", encoding="utf-8") as f:
+    with open(caminho_saida + ".config.json", "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
 
-    concluidas = _carregar_execucoes_concluidas(caminho_saida) if retomar else {}
-    if concluidas:
-        print(f"Retomando: {len(concluidas)} execuções já concluídas serão mantidas.")
-
     linhas = []
-    novas = 0
     primeira_execucao = True
-    interrompido = False
-
-    def salvar():
-        # utf-8-sig: abre corretamente no Excel
-        with open(caminho_saida, "w", newline="", encoding="utf-8-sig") as f:
-            writer = csv.DictWriter(f, fieldnames=CAMPOS_CSV)
-            writer.writeheader()
-            writer.writerows(linhas)
-
     for qid, pergunta in perguntas:
         for rep in range(1, n_repeticoes + 1):
-            if (qid, rep) in concluidas:
-                linhas.append(concluidas[(qid, rep)])
-                continue
-            if max_execucoes_novas is not None and novas >= max_execucoes_novas:
-                print(f"\nLimite de {max_execucoes_novas} execuções novas atingido nesta chamada.")
-                interrompido = True
-                break
-
-            # Cada execução do grafo dispara de 3 a ~9 chamadas ao LLM; a pausa ajuda a
-            # respeitar o limite por minuto da API.
+            # Cada execução do grafo dispara de 3 a ~9 chamadas ao LLM; a pausa evita
+            # estourar o limite de requisições por minuto do plano gratuito.
             if pausa_entre_execucoes_s > 0 and not primeira_execucao:
                 print(f"(aguardando {pausa_entre_execucoes_s:.0f}s para respeitar a cota da API...)")
                 time.sleep(pausa_entre_execucoes_s)
@@ -586,21 +505,12 @@ def executar_benchmark(
                 except Exception as e:
                     erro = str(e)
                     print(f"[ERRO] {qid} (tentativa {tentativa}/{max_tentativas}): {erro[:200]}")
-                    if _cota_diaria_esgotada(erro):
-                        interrompido = True
-                        break
-                    if _cota_por_minuto(erro) and tentativa < max_tentativas:
+                    limite_cota = any(s in erro for s in ("429", "RESOURCE_EXHAUSTED", "quota"))
+                    if limite_cota and tentativa < max_tentativas:
                         time.sleep(65)  # espera a janela de 1 minuto renovar e tenta de novo
                     else:
                         break
-
-            if interrompido:  # cota diária: não grava linha vazia, para retomar depois
-                print("\nCota DIÁRIA da API esgotada. O progresso foi salvo; rode de novo quando a "
-                      "cota renovar (o erro informa o prazo) ou ative o faturamento no projeto. "
-                      "O script retoma de onde parou.")
-                break
-
-            if r is None:  # erro que não é de cota: registra a linha vazia com o erro
+            if r is None:  # todas as tentativas falharam: registra a linha vazia com o erro
                 r = {"resposta": "", "plano_busca": [], "contextos": [], "n_chunks": 0,
                      "iteracoes_verificacao": 0, "score_relevancia": "",
                      "justificativa_verificacao": "", "contexto_insuficiente": "",
@@ -623,22 +533,14 @@ def executar_benchmark(
                 "fontes": json.dumps(r["fontes"], ensure_ascii=False),
                 "erro": erro,
             })
-            novas += 1
-            salvar()  # grava a cada execução, para não perder progresso
 
-        if interrompido:
-            break
+        # utf-8-sig: abre corretamente no Excel
+        with open(caminho_saida, "w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.DictWriter(f, fieldnames=CAMPOS_CSV)
+            writer.writeheader()
+            writer.writerows(linhas)
 
-    # preserva execuções concluídas que ficaram depois do ponto de parada
-    salvas = {(l["id"], int(l["repeticao"])) for l in linhas}
-    for chave, linha in concluidas.items():
-        if chave not in salvas:
-            linhas.append(linha)
-    salvar()
-
-    total = len(linhas)
-    previstas = len(perguntas) * n_repeticoes
-    print(f"\nSalvo em {caminho_saida}: {total} de {previstas} execuções previstas.")
+    print(f"\nConcluído. Resultados em {caminho_saida}")
     return caminho_saida
 
 
@@ -651,13 +553,12 @@ if __name__ == "__main__":
     vectorstore = carregar_vectorstore_default()
     grafo = construir_grafo(vectorstore, pesquisar_na_web_fn=None, permitir_fallback_web=False)
 
-    # Plano gratuito do gemini-2.5-flash: 20 requisições POR DIA. Cada execução usa de 3 a 5,
-    # então rode 1 repetição e deixe o script parar quando a cota acabar; ao rodar de novo
-    # ele retoma de onde parou. Com faturamento ativo, use n_repeticoes=3 e pausa menor.
+    # Primeiro faça um ensaio curto: n_repeticoes=1 e perguntas=PERGUNTAS[:3].
+    # Depois rode o conjunto completo (20 perguntas x 3 repetições = 60 execuções).
     executar_benchmark(
         grafo,
-        n_repeticoes=1,
+        n_repeticoes=3,
         caminho_saida="resultados_agentico.csv",
         extra_config={"fallback_web": False},
-        pausa_entre_execucoes_s=10,
+        pausa_entre_execucoes_s=45,
     )

@@ -5,7 +5,7 @@ Quatro agentes especializados: Planejador, Recuperador, Verificador e Sintetizad
 
 ALTERAÇÕES EM RELAÇÃO À VERSÃO ANTERIOR (para o controle experimental com o Artigo 1)
 -------------------------------------------------------------------------------------
-1. Modelo, temperaturas e kA ficam em constantes no topo do arquivo, para serem
+1. Modelo, temperaturas e k ficam em constantes no topo do arquivo, para serem
    alinhados ao Artigo 1 e registrados na Tabela I. O alias "-latest" foi removido.
 2. k base = 4 (igual ao Artigo 1). Antes era 8, com +6 a cada retentativa.
 3. Os exemplos do prompt do Planejador não pertencem mais ao conjunto de avaliação
