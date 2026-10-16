@@ -1,5 +1,5 @@
 {
-  "modelo": "gemini-2.5-flash",
+  "modelo": "gemini-3.5-flash-lite",
   "temperatura_sintetizador": 0.7,
   "temperatura_planejador": 0.2,
   "temperatura_verificador": 0.0,
@@ -7,13 +7,13 @@
   "k_incremento_retentativa": 4,
   "max_subperguntas": 4,
   "max_iteracoes_verificacao": 3,
-  "prompt_sintetizador": "artigo1",
-  "prompt_sha256": "406fe547eb32",
+  "prompt_sintetizador": "completude",
   "fallback_web": false,
+  "chunk_size_alvo": 700,
   "info_indice": {
-    "n_trechos": 49,
-    "tamanho_medio": 669,
-    "tamanho_min": 617,
+    "n_trechos": 50,
+    "tamanho_medio": 659,
+    "tamanho_min": 240,
     "tamanho_max": 698
   }
 }
