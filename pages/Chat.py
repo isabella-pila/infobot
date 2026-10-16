@@ -65,8 +65,8 @@ def get_text_chunks(text):
     # (ex: disciplinas de um período) no meio, o que cortava informação na resposta.
     splitter = RecursiveCharacterTextSplitter(
         separators=["\n\n", "\n", ". ", " ", ""],
-        chunk_size=1500,
-        chunk_overlap=300,
+        chunk_size=700,
+        chunk_overlap=200,
         length_function=len,
     )
     return splitter.split_text(text)

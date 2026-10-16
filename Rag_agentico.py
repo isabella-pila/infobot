@@ -1,53 +1,57 @@
 """
-Artigo 2 - Assistente Virtual com RAG Agêntico e Orquestração Multi-Agentes (LangGraph)
-========================================================================================
-Quatro agentes especializados: Planejador, Recuperador, Verificador e Sintetizador.
+rag_agentico_700.py
+===================
+Artigo 2 - Assistente Virtual com RAG Agêntico e Orquestração Multi-Agentes (LangGraph).
+Quatro agentes: Planejador, Recuperador, Verificador e Sintetizador.
 
-ALTERAÇÕES EM RELAÇÃO À VERSÃO ANTERIOR (para o controle experimental com o Artigo 1)
--------------------------------------------------------------------------------------
-1. Modelo, temperaturas e k ficam em constantes no topo do arquivo, para serem
-   alinhados ao Artigo 1 e registrados na Tabela I. O alias "-latest" foi removido.
-2. k base = 4 (igual ao Artigo 1). Antes era 8, com +6 a cada retentativa.
-3. Os exemplos do prompt do Planejador não pertencem mais ao conjunto de avaliação
-   (antes eram as perguntas Q13 e Q16).
-4. O Sintetizador pode usar o RAG_PROMPT do Artigo 1 (USAR_PROMPT_ARTIGO1), isolando
-   o efeito do Planejador e do Verificador do efeito do prompt.
-5. A busca web é desativada por padrão (permitir_fallback_web=False), como na
-   avaliação do Artigo 1. Sem ela, o contexto insuficiente segue para a geração e é
-   sinalizado em `contexto_insuficiente`.
-6. O Verificador lê o mesmo contexto que o Sintetizador (limite de 12.000 caracteres
-   elevado para 60.000, com aviso se for atingido).
-7. O retorno inclui os contextos recuperados, o plano de busca, a nota e a
-   justificativa do Verificador (os contextos são necessários para o RAGAS).
-8. executar_benchmark() roda as 20 perguntas do Artigo 1 (Tabela 1), com repetições,
-   e salva CSV + JSON da configuração.
+VERSÃO PARA RODAR DE NOVO, ALINHADA AO ARTIGO 1
+-----------------------------------------------
+Em relação à versão anterior, mudam só as condições do experimento (a arquitetura é a mesma):
+  1. Índice com a segmentação do Artigo 1 (700 caracteres, sobreposição 200), via indice_700.py,
+     que confere o tamanho dos trechos antes de rodar.
+  2. O Sintetizador usa o RAG_PROMPT do Artigo 1 (USAR_PROMPT_ARTIGO1 = True). Assim o prompt
+     de geração é idêntico ao do convencional e o efeito do Planejador/Verificador fica isolado.
+  3. O CSV registra chars_contexto e contexto_truncado (> 7.000 caracteres, limite do Context
+     Relevance do RAGAS 0.2), para preencher a coluna "Trunc." da planilha.
+  4. Retomada: se a cota da API acabar, rode o mesmo comando de novo; só o que falta é refeito.
+     Também espera e tenta de novo quando a cota por minuto estoura.
+  5. A configuração (incluindo hash do prompt e tamanho dos trechos) é gravada em .config.json
+     e o script se recusa a misturar configurações diferentes no mesmo CSV.
+
+Uso (na pasta do projeto, com indice_700.py e o .env com GOOGLE_API_KEY):
+    python rag_agentico_700.py --apenas Q1 Q5                       # teste barato
+    python rag_agentico_700.py                                      # as 20 perguntas
+    python rag_agentico_700.py --apenas Q1 --repeticoes 3 --saida resultados_agentico_700_q1.csv
+    python rag_agentico_700.py --fora-escopo                        # F1 a F5 (sem cobertura)
 """
 
+import argparse
+import csv
+import hashlib
+import json
+import operator
 import os
 import re
-import csv
-import json
+import sys
 import time
-import operator
-from typing import TypedDict, Annotated, Sequence, List, Optional
+from typing import Annotated, List, Optional, Sequence, TypedDict
 
+from dotenv import load_dotenv
+from langchain.chains import LLMChain
+from langchain.chains.question_answering import load_qa_chain
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.chains import LLMChain
-from langchain.chains.question_answering import load_qa_chain
-from langgraph.graph import StateGraph, END
+from langgraph.graph import END, StateGraph
 
+csv.field_size_limit(2**31 - 1)
+load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # ============================================================
 # CONFIGURAÇÃO DO EXPERIMENTO  (registre estes valores na Tabela I do artigo)
 # ============================================================
-# CONFIRME: deve ser EXATAMENTE o modelo usado nos resultados do Artigo 1.
-# Fixe a versão: aliases como "-latest" mudam com o tempo e prejudicam a reprodutibilidade.
-MODELO_GERADOR = "gemini-2.5-flash"
-
-# CONFIRME: temperatura de geração do Artigo 1 (o texto submetido diz 0,7).
+MODELO_GERADOR = "gemini-2.5-flash"      # o mesmo do Artigo 1 e do convencional
 TEMPERATURA_SINTETIZADOR = 0.7
 TEMPERATURA_PLANEJADOR = 0.2
 TEMPERATURA_VERIFICADOR = 0.0
@@ -58,13 +62,69 @@ MAX_SUBPERGUNTAS = 4
 MAX_ITERACOES_VERIFICACAO = 3    # nº máximo de verificações (= até 2 retentativas)
 MAX_CHARS_VERIFICADOR = 60000
 MAX_OUTPUT_TOKENS_SINTETIZADOR = 8192
+LIMITE_CONTEXT_RELEVANCE = 7000  # o Context Relevance do RAGAS 0.2 lê só os 7.000 primeiros caracteres
 
-# Para a comparação principal, cole aqui o RAG_PROMPT do Artigo 1 (string com {context}
-# e {question}) e mude USAR_PROMPT_ARTIGO1 para True. Assim, o prompt de geração fica
-# idêntico nas duas arquiteturas. Com False, usa-se o PROMPT_SINTETIZADOR abaixo
-# (ênfase em completude), que é uma condição adicional e deve ser descrita como tal.
-RAG_PROMPT_ARTIGO1: Optional[str] = None
-USAR_PROMPT_ARTIGO1 = False
+# ----------------------------------------------------------------
+# RAG_PROMPT do Artigo 1 (texto exato, com os mesmos erros de digitação do original).
+# Se existir rag_convencional_com_ragas.py na pasta, o prompt é importado de lá, para
+# garantir que os dois sistemas usem o MESMO texto (confira o prompt_sha256 nos dois .config.json).
+# ----------------------------------------------------------------
+RAG_PROMPT_ARTIGO1: Optional[str] = """
+# DIRETIVA PRINCIPAL
+Você é o "Infobot", o assistente virtual do CEFET-MG, campus Varginha. Sua identidade é a de um colega experiente de Sistemas de Informação, que domina os assuntos do curso e está sempre disposto a auxiliar os estudantes com clareza e objetividade.
+
+Sua missão é traduzir materiais de estudo complexos em resumos e explicações didáticas e fáceis de compreender.
+sempre traga as informações de forma organizada.
+---
+# PERSONA E TOM DE VOZ
+
+    quando for sobre matriz curricular ou materias sempre mande todas sem exeção 
+1.  **Linguagem:** Comunique-se de forma clara, objetiva e encorajadora. seja legal pode usar algumas girias mas não exagere 
+2.  **Atitude:** Mantenha sempre uma postura positiva, paciente e motivadora. O objetivo é fazer com que o estudante se sinta confiante em sua capacidade de aprender qualquer tópico.
+
+---
+# DIRETRIZES DE EXECUÇÃO
+
+1.  **Fonte de Verdade Primária:** Sua primeira e principal fonte de informação é sempre o conteúdo fornecido no `{{context}}` (os arquivos que o usuário enviou).
+
+2.  **Análise Estruturada (O Ponto-Chave):** Ao receber um material no `{{context}}` para resumir ou explicar, sua primeira ação é analisá-lo para identificar os seguintes pontos:
+    * **Conceitos-chave e Definições:** Quais são os termos técnicos centrais?
+    * **Tópicos Principais:** Quais são os grandes blocos de assunto?
+    * **Exemplos e Analogias:** O texto utiliza casos práticos para ilustrar a teoria?
+    * **Argumento Central:** Qual é a ideia principal que o texto defende ou explica?
+    * **Processos ou Fórmulas:** Existe um passo a passo, algoritmo, código ou fórmula?
+    * **Conclusões:** Qual é o fechamento ou o resultado principal do assunto?
+
+3.  **Como Criar RESUMOS Eficazes:**
+    * **Completo e Detalhado:** Utilize a análise do passo anterior como um roteiro. Seu resumo **deve obrigatoriamente** abordar todos os tópicos e conceitos-chave identificados no material. Não deixe nada de fora.
+    * **Organização é Tudo:** Empregue títulos, subtítulos e listas (`bullet points`) para segmentar o conteúdo, melhorando a clareza e a leitura. Evite parágrafos muito longos.
+    * **O objetivo final:** Ao final da leitura, o estudante deve ter uma compreensão completa e bem estruturada do material original.
+
+
+# REGRAS DE INTERAÇÃO
+
+* **Comunicação Direta:** Não há necessidade de saudações ("Olá", "Bom dia") a cada nova pergunta. Mantenha a conversa fluida.
+* **Agradecimentos:** Se o usuário agradecer com "obrigado(a)" ou similar, responda de forma educada e prestativa, com algo como "De nada! Se precisar de mais alguma coisa, é só chamar." ou "Disponha!".
+* **Proatividade:** Se a pergunta do estudante for muito ampla ("me explica sobre Redes de Computadores"), ajude-o a especificar. Exemplo: *"Claro! Redes é um assunto bem grande. Para te ajudar melhor, você quer saber sobre os modelos de camadas como OSI/TCP, tipos de topologia, ou talvez exemplos de protocolos como HTTP e DNS?"*.
+**Quando a pessoa so cumprimentar ("ola", "bom dia") cumprimentar também e so isso
+**se as pessoas perguntares coisas fora da area do cefet, falar que não pode responder.**
+
+
+Contexto:
+{context}
+
+Pergunta:
+{question}
+"""
+try:  # fonte única do prompt, se o script do convencional estiver na pasta
+    from rag_convencional_com_ragas import RAG_PROMPT as _PROMPT_CONV
+
+    RAG_PROMPT_ARTIGO1 = _PROMPT_CONV
+    print("[Prompt] RAG_PROMPT importado de rag_convencional_com_ragas.py")
+except Exception:
+    pass
+
+USAR_PROMPT_ARTIGO1 = True       # True = mesmo prompt do convencional (comparação principal)
 
 
 # ============================================================
@@ -92,8 +152,7 @@ class GraphState(TypedDict):
 # ============================================================
 # 2. PROMPTS DOS AGENTES
 # ============================================================
-# Os exemplos abaixo NÃO devem coincidir com nenhuma pergunta do conjunto de avaliação.
-# Se trocar os exemplos, confira que continuam fora das 20 perguntas.
+# Os exemplos abaixo NÃO coincidem com nenhuma pergunta do conjunto de avaliação.
 PROMPT_PLANEJADOR = """Você é o Agente Planejador de um sistema de suporte acadêmico do CEFET-MG, Campus Varginha.
 Analise a pergunta do usuário e decida se ela pode ser respondida com uma única busca vetorial
 ou se precisa ser decomposta em sub-perguntas mais específicas.
@@ -129,6 +188,8 @@ Contexto recuperado:
 {contexto}
 """
 
+# Prompt alternativo (ênfase em completude). Só é usado se USAR_PROMPT_ARTIGO1 = False e,
+# nesse caso, deve ser descrito no artigo como uma condição adicional.
 PROMPT_SINTETIZADOR = """Você é o "Infobot", assistente virtual do CEFET-MG, Campus Varginha, atuando agora
 como Agente Sintetizador de um pipeline multi-agente.  Use SOMENTE o contexto abaixo para responder
 de forma clara, organizada e didática, com títulos/bullet points quando fizer sentido.
@@ -149,15 +210,20 @@ Pergunta:
 Resposta:"""
 
 
-def _prompt_sintetizador() -> ChatPromptTemplate:
+def _texto_prompt_sintetizador() -> str:
     if USAR_PROMPT_ARTIGO1:
         if not RAG_PROMPT_ARTIGO1:
-            raise ValueError(
-                "USAR_PROMPT_ARTIGO1=True, mas RAG_PROMPT_ARTIGO1 está vazio. "
-                "Cole o RAG_PROMPT do Artigo 1 (com {context} e {question})."
-            )
-        return ChatPromptTemplate.from_template(RAG_PROMPT_ARTIGO1)
-    return ChatPromptTemplate.from_template(PROMPT_SINTETIZADOR)
+            raise ValueError("USAR_PROMPT_ARTIGO1=True, mas RAG_PROMPT_ARTIGO1 está vazio.")
+        return RAG_PROMPT_ARTIGO1
+    return PROMPT_SINTETIZADOR
+
+
+def _prompt_sintetizador() -> ChatPromptTemplate:
+    return ChatPromptTemplate.from_template(_texto_prompt_sintetizador())
+
+
+def _hash_prompt() -> str:
+    return hashlib.sha256(_texto_prompt_sintetizador().encode("utf-8")).hexdigest()[:12]
 
 
 # ============================================================
@@ -192,10 +258,7 @@ def agente_planejador(state: GraphState) -> dict:
     if not sub_perguntas:
         sub_perguntas = [pergunta]
 
-    return {
-        "pergunta_original": pergunta,
-        "plano_busca": sub_perguntas,
-    }
+    return {"pergunta_original": pergunta, "plano_busca": sub_perguntas}
 
 
 def agente_recuperador(state: GraphState, vectorstore, k_base: int = K_BASE) -> dict:
@@ -218,6 +281,8 @@ def agente_recuperador(state: GraphState, vectorstore, k_base: int = K_BASE) -> 
             docs_encontrados.extend(vectorstore.similarity_search(sub_pergunta, k=k))
         except Exception as e:
             print(f"[Recuperador] erro na busca '{sub_pergunta}': {e}")
+            if _cota_esgotada(str(e)) or _cota_por_minuto(str(e)):
+                raise  # deixa o laço externo esperar/parar, em vez de seguir com contexto vazio
 
     # Remove duplicatas, inclusive contra o que JÁ foi acumulado em passagens anteriores.
     vistos = {d.page_content[:200] for d in state.get("contexto_recuperado", [])}
@@ -275,8 +340,7 @@ def agente_sintetizador(state: GraphState) -> dict:
     })
 
     fontes = list({
-        d.metadata.get("source", "base institucional")
-        for d in state["contexto_recuperado"]
+        d.metadata.get("source", "base institucional") for d in state["contexto_recuperado"]
     })
 
     return {
@@ -287,11 +351,7 @@ def agente_sintetizador(state: GraphState) -> dict:
 
 
 def agente_busca_web_fallback(state: GraphState, pesquisar_na_web_fn) -> dict:
-    """Fallback web (somente se permitir_fallback_web=True em construir_grafo).
-
-    Reaproveita a busca web do Artigo 1. Aceita a versão estruturada (retorna
-    dict {resposta, fontes}) e a antiga (retorna apenas string).
-    """
+    """Fallback web (somente se permitir_fallback_web=True em construir_grafo)."""
     llm = get_llm(temperature=TEMPERATURA_SINTETIZADOR)
     contexto_local = list(state.get("contexto_recuperado", []))
 
@@ -307,9 +367,7 @@ def agente_busca_web_fallback(state: GraphState, pesquisar_na_web_fn) -> dict:
         fontes = resultado_web.get("fontes", [])
     else:
         resposta = resultado_web or ""
-        fontes = list({
-            d.metadata.get("source", "base institucional") for d in contexto_local
-        })
+        fontes = list({d.metadata.get("source", "base institucional") for d in contexto_local})
 
     return {
         "resposta_final": resposta or "Não foi possível encontrar uma resposta confiável.",
@@ -323,39 +381,25 @@ def agente_busca_web_fallback(state: GraphState, pesquisar_na_web_fn) -> dict:
 # 5. ROTEAMENTO CONDICIONAL
 # ============================================================
 def decidir_proximo_passo(state: GraphState, permitir_fallback_web: bool = False) -> str:
-    # Contexto suficiente (nota 2): responde.
-    if state["contexto_valido"]:
+    if state["contexto_valido"]:                                  # nota 2: responde
         return "sintetizar"
-
-    # Ainda há tentativas: busca de novo (consulta ampliada e k maior).
-    if state["iteracoes_verificacao"] < MAX_ITERACOES_VERIFICACAO:
+    if state["iteracoes_verificacao"] < MAX_ITERACOES_VERIFICACAO:  # ainda há tentativas
         return "recuperar_novamente"
-
-    # Tentativas esgotadas. Nota 1 (parcial): responde com o que tem.
-    if state.get("score_relevancia", 0) >= 1:
+    if state.get("score_relevancia", 0) >= 1:                     # esgotou, nota 1: responde
         return "sintetizar"
-
-    # Nota 0: web só se permitido; caso contrário gera com o contexto disponível
-    # (o resultado fica sinalizado em contexto_insuficiente).
-    if permitir_fallback_web:
+    if permitir_fallback_web:                                     # nota 0
         return "busca_web_fallback"
-    return "sintetizar"
+    return "sintetizar"                                           # sinaliza contexto_insuficiente
 
 
 # ============================================================
 # 6. MONTAGEM DO GRAFO
 # ============================================================
 def construir_grafo(vectorstore, pesquisar_na_web_fn=None, permitir_fallback_web: bool = False):
-    """
-    vectorstore: FAISS já carregado (o mesmo índice do Artigo 1).
-    pesquisar_na_web_fn: função de busca web do Artigo 1 (só usada se
-        permitir_fallback_web=True). Para o experimento comparativo, deixe False.
-    """
     if permitir_fallback_web and pesquisar_na_web_fn is None:
         raise ValueError("permitir_fallback_web=True exige pesquisar_na_web_fn.")
 
     workflow = StateGraph(GraphState)
-
     workflow.add_node("planejador", agente_planejador)
     workflow.add_node("recuperador", lambda s: agente_recuperador(s, vectorstore))
     workflow.add_node("verificador", agente_verificador)
@@ -365,10 +409,7 @@ def construir_grafo(vectorstore, pesquisar_na_web_fn=None, permitir_fallback_web
     workflow.add_edge("planejador", "recuperador")
     workflow.add_edge("recuperador", "verificador")
 
-    destinos = {
-        "sintetizar": "sintetizador",
-        "recuperar_novamente": "recuperador",
-    }
+    destinos = {"sintetizar": "sintetizador", "recuperar_novamente": "recuperador"}
     if permitir_fallback_web:
         workflow.add_node(
             "busca_web_fallback",
@@ -378,18 +419,24 @@ def construir_grafo(vectorstore, pesquisar_na_web_fn=None, permitir_fallback_web
         destinos["busca_web_fallback"] = "busca_web_fallback"
 
     workflow.add_conditional_edges(
-        "verificador",
-        lambda s: decidir_proximo_passo(s, permitir_fallback_web),
-        destinos,
+        "verificador", lambda s: decidir_proximo_passo(s, permitir_fallback_web), destinos
     )
     workflow.add_edge("sintetizador", END)
-
     return workflow.compile()
 
 
 # ============================================================
-# 7. EXECUÇÃO E MÉTRICAS
+# 7. EXECUÇÃO, MÉTRICAS E RETOMADA
 # ============================================================
+def _cota_esgotada(erro: str) -> bool:
+    """Cota DIÁRIA: não adianta esperar."""
+    return ("PerDay" in erro) or ("per day" in erro.lower()) or bool(re.search(r"retry in \d+h", erro))
+
+
+def _cota_por_minuto(erro: str) -> bool:
+    return any(s in erro for s in ("429", "RESOURCE_EXHAUSTED", "quota")) and not _cota_esgotada(erro)
+
+
 def responder_com_rag_agentico(app_grafo, pergunta: str) -> dict:
     """Executa o grafo para uma pergunta e retorna resposta + métricas + contextos."""
     estado_inicial: GraphState = {
@@ -407,12 +454,12 @@ def responder_com_rag_agentico(app_grafo, pergunta: str) -> dict:
         "inicio_execucao": time.time(),
         "latencia_segundos": 0.0,
     }
-
     resultado = app_grafo.invoke(estado_inicial, config={"recursion_limit": 15})
 
-    # Todos os trechos acumulados são os que o Sintetizador recebeu; use esta lista
+    # Todos os trechos acumulados são os que o Sintetizador recebeu: use esta lista
     # como retrieved_contexts no RAGAS.
     contextos = [d.page_content for d in resultado.get("contexto_recuperado", [])]
+    chars = sum(len(c) for c in contextos)
 
     return {
         "resposta": resultado["resposta_final"],
@@ -420,6 +467,8 @@ def responder_com_rag_agentico(app_grafo, pergunta: str) -> dict:
         "plano_busca": resultado.get("plano_busca", []),
         "contextos": contextos,
         "n_chunks": len(contextos),
+        "chars_contexto": chars,
+        "contexto_truncado": chars > LIMITE_CONTEXT_RELEVANCE,
         "iteracoes_verificacao": resultado["iteracoes_verificacao"],
         "score_relevancia": resultado.get("score_relevancia", 0),
         "justificativa_verificacao": resultado.get("justificativa_verificacao", ""),
@@ -429,8 +478,7 @@ def responder_com_rag_agentico(app_grafo, pergunta: str) -> dict:
     }
 
 
-# Conjunto de avaliação do Artigo 1 (Tabela 1). Confira se o texto é idêntico ao que
-# foi enviado ao sistema convencional.
+# Conjunto de avaliação do Artigo 1 (Tabela 1).
 PERGUNTAS = [
     ("Q1", "Qual é o objetivo do curso de Sistemas de Informação?"),
     ("Q2", "Como os eventos do CEFET-MG contribuem para a formação dos alunos de SI?"),
@@ -454,10 +502,21 @@ PERGUNTAS = [
     ("Q20", "Quais são as responsabilidades do aluno durante o estágio?"),
 ]
 
+# Consultas sem cobertura documental (Artigo 1, Tabela 2). Confira se o texto é idêntico ao
+# que você enviou ao sistema convencional no Artigo 1.
+FORA_DO_ESCOPO = [
+    ("F1", "Qual é a nota de corte do SiSU para Sistemas de Informação em Varginha?"),
+    ("F2", "Quantas horas de atividades complementares eu já cumpri?"),
+    ("F3", "Como funciona o TCC no curso de Engenharia Elétrica do CEFET-MG?"),
+    ("F4", "Me explique como funciona o algoritmo de Dijkstra."),
+    ("F5", "Por que o TCC do curso exige defesa em inglês?"),
+]
+
 CAMPOS_CSV = [
     "id", "pergunta", "repeticao", "resposta", "plano_busca", "contextos", "n_chunks",
-    "iteracoes_verificacao", "score_relevancia", "justificativa_verificacao",
-    "contexto_insuficiente", "usou_fallback_web", "latencia_segundos", "fontes", "erro",
+    "chars_contexto", "contexto_truncado", "iteracoes_verificacao", "score_relevancia",
+    "justificativa_verificacao", "contexto_insuficiente", "usou_fallback_web",
+    "latencia_segundos", "fontes", "erro",
 ]
 
 
@@ -472,52 +531,99 @@ def configuracao_atual(extra: Optional[dict] = None) -> dict:
         "max_subperguntas": MAX_SUBPERGUNTAS,
         "max_iteracoes_verificacao": MAX_ITERACOES_VERIFICACAO,
         "prompt_sintetizador": "artigo1" if USAR_PROMPT_ARTIGO1 else "completude",
+        "prompt_sha256": _hash_prompt(),
     }
     if extra:
         cfg.update(extra)
     return cfg
 
 
+def _ler_csv(caminho: str) -> list:
+    if not os.path.exists(caminho):
+        return []
+    with open(caminho, newline="", encoding="utf-8-sig") as f:
+        return list(csv.DictReader(f))
+
+
 def executar_benchmark(
     app_grafo,
     perguntas=PERGUNTAS,
     n_repeticoes: int = 1,
-    caminho_saida: str = "resultados_agentico.csv",
+    caminho_saida: str = "resultados_agentico_700.csv",
     extra_config: Optional[dict] = None,
+    pausa: float = 3.0,
 ) -> str:
-    """Roda todas as perguntas (n_repeticoes vezes cada) e salva CSV + JSON da configuração.
-
-    O CSV é regravado após cada pergunta, para não perder progresso se a API falhar.
-    As colunas plano_busca, contextos e fontes são JSON (use json.loads ao ler).
-    """
+    """Roda as perguntas (n_repeticoes vezes cada), salva CSV + JSON da configuração e retoma
+    de onde parou se a execução for interrompida (cota da API, queda de rede etc.)."""
     cfg = configuracao_atual(extra_config)
+    caminho_cfg = caminho_saida + ".config.json"
+
+    # Não mistura configurações diferentes no mesmo CSV.
+    if os.path.exists(caminho_cfg) and os.path.exists(caminho_saida):
+        with open(caminho_cfg, encoding="utf-8") as f:
+            anterior = {k: v for k, v in json.load(f).items() if k != "info_indice"}
+        atual = {k: v for k, v in cfg.items() if k != "info_indice"}
+        if anterior != atual:
+            sys.exit("A configuração mudou desde a execução anterior deste CSV. Apague o CSV e o "
+                     f".config.json ou use outro --saida.\nAnterior: {anterior}\nAtual:    {atual}")
+
     print("Configuração:", json.dumps(cfg, ensure_ascii=False))
-    with open(caminho_saida + ".config.json", "w", encoding="utf-8") as f:
+    with open(caminho_cfg, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
 
-    linhas = []
+    ordem = {(qid, rep): i for i, (qid, _) in enumerate(perguntas) for rep in range(1, n_repeticoes + 1)}
+    linhas = {}
+    for r in _ler_csv(caminho_saida):
+        chave = (r["id"], int(r.get("repeticao") or 1))
+        if r.get("resposta") and not r.get("erro"):   # só mantém o que foi concluído
+            linhas[chave] = r
+
+    def salvar():
+        ordenadas = sorted(linhas.items(), key=lambda kv: (ordem.get(kv[0], 10**6), kv[0][1]))
+        with open(caminho_saida, "w", newline="", encoding="utf-8-sig") as f:  # abre no Excel
+            w = csv.DictWriter(f, fieldnames=CAMPOS_CSV, extrasaction="ignore")
+            w.writeheader()
+            w.writerows([v for _, v in ordenadas])
+
+    parar = False
     for qid, pergunta in perguntas:
         for rep in range(1, n_repeticoes + 1):
+            if (qid, rep) in linhas:
+                print(f"=== {qid} (rep {rep}) já concluída, pulando ===")
+                continue
             print(f"\n=== {qid} (repetição {rep}/{n_repeticoes}) ===")
-            try:
-                r = responder_com_rag_agentico(app_grafo, pergunta)
-                erro = ""
-            except Exception as e:  # registra e segue para a próxima
-                r = {"resposta": "", "plano_busca": [], "contextos": [], "n_chunks": 0,
-                     "iteracoes_verificacao": 0, "score_relevancia": "",
-                     "justificativa_verificacao": "", "contexto_insuficiente": "",
-                     "usou_fallback_web": "", "latencia_segundos": "", "fontes": []}
-                erro = str(e)
-                print(f"[ERRO] {qid}: {erro}")
+            r, erro = None, ""
+            for tentativa in range(1, 4):
+                try:
+                    r = responder_com_rag_agentico(app_grafo, pergunta)
+                    erro = ""
+                    break
+                except Exception as e:
+                    erro = str(e)
+                    print(f"[ERRO] {qid} (tentativa {tentativa}/3): {erro[:200]}")
+                    if _cota_esgotada(erro):
+                        parar = True
+                        break
+                    if _cota_por_minuto(erro) and tentativa < 3:
+                        print("  cota por minuto: aguardando 65 s")
+                        time.sleep(65)
+                    else:
+                        break
+            if parar:
+                print("\nCota diária do Gemini esgotada. O progresso foi salvo; rode o mesmo comando "
+                      "de novo depois e ele retoma de onde parou.")
+                break
+            if r is None:
+                print(f"  {qid} falhou e não foi salva; será refeita na próxima rodada.")
+                continue
 
-            linhas.append({
-                "id": qid,
-                "pergunta": pergunta,
-                "repeticao": rep,
+            linhas[(qid, rep)] = {
+                "id": qid, "pergunta": pergunta, "repeticao": rep,
                 "resposta": r["resposta"],
                 "plano_busca": json.dumps(r["plano_busca"], ensure_ascii=False),
                 "contextos": json.dumps(r["contextos"], ensure_ascii=False),
-                "n_chunks": r["n_chunks"],
+                "n_chunks": r["n_chunks"], "chars_contexto": r["chars_contexto"],
+                "contexto_truncado": r["contexto_truncado"],
                 "iteracoes_verificacao": r["iteracoes_verificacao"],
                 "score_relevancia": r["score_relevancia"],
                 "justificativa_verificacao": r["justificativa_verificacao"],
@@ -525,32 +631,60 @@ def executar_benchmark(
                 "usou_fallback_web": r["usou_fallback_web"],
                 "latencia_segundos": r["latencia_segundos"],
                 "fontes": json.dumps(r["fontes"], ensure_ascii=False),
-                "erro": erro,
-            })
+                "erro": "",
+            }
+            salvar()  # grava a cada pergunta
+            if pausa > 0:
+                time.sleep(pausa)
+        if parar:
+            break
 
-        # utf-8-sig: abre corretamente no Excel
-        with open(caminho_saida, "w", newline="", encoding="utf-8-sig") as f:
-            writer = csv.DictWriter(f, fieldnames=CAMPOS_CSV)
-            writer.writeheader()
-            writer.writerows(linhas)
-
-    print(f"\nConcluído. Resultados em {caminho_saida}")
+    salvar()
+    faltam = [k for k in ordem if k not in linhas]
+    print(f"\nResultados em {caminho_saida} | concluídas: {len(linhas)} | faltam: {len(faltam)} {faltam if faltam else ''}")
     return caminho_saida
 
 
 # ============================================================
-# 8. EXEMPLO DE USO
+# 8. EXECUÇÃO
 # ============================================================
-if __name__ == "__main__":
-    # AJUSTE este import para o nome real do arquivo do Artigo 1.
-    from app import carregar_vectorstore_default
+def main():
+    ap = argparse.ArgumentParser(description="RAG agêntico (Artigo 2) no índice de 700 caracteres")
+    ap.add_argument("--apenas", nargs="*", default=[], help="IDs a rodar (ex.: Q1 Q5)")
+    ap.add_argument("--repeticoes", type=int, default=1)
+    ap.add_argument("--fora-escopo", action="store_true", help="roda F1 a F5 em vez de Q1 a Q20")
+    ap.add_argument("--saida", default=None)
+    ap.add_argument("--reconstruir-indice", action="store_true")
+    ap.add_argument("--pausa", type=float, default=3.0, help="segundos entre perguntas")
+    args = ap.parse_args()
 
-    vectorstore = carregar_vectorstore_default()
+    if not GOOGLE_API_KEY:
+        sys.exit("GOOGLE_API_KEY não encontrada. Coloque GOOGLE_API_KEY=... no .env.")
+
+    base = FORA_DO_ESCOPO if args.fora_escopo else PERGUNTAS
+    perguntas = base
+    if args.apenas:
+        sel = {x.upper() for x in args.apenas}
+        perguntas = [p for p in base if p[0] in sel]
+    if not perguntas:
+        sys.exit("Nenhuma pergunta selecionada.")
+    saida = args.saida or ("resultados_agentico_700_fora_escopo.csv" if args.fora_escopo
+                           else "resultados_agentico_700.csv")
+
+    from indice_700 import carregar_vectorstore_700, info_indice
+
+    vectorstore = carregar_vectorstore_700(reconstruir=args.reconstruir_indice)  # confere 700 antes de rodar
     grafo = construir_grafo(vectorstore, pesquisar_na_web_fn=None, permitir_fallback_web=False)
 
     executar_benchmark(
         grafo,
-        n_repeticoes=3,
-        caminho_saida="resultados_agentico.csv",
-        extra_config={"fallback_web": False},
+        perguntas=perguntas,
+        n_repeticoes=args.repeticoes,
+        caminho_saida=saida,
+        extra_config={"fallback_web": False, "info_indice": info_indice(vectorstore)},
+        pausa=args.pausa,
     )
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,10 @@
+{
+  "assinatura": "ecf593cf0ad75266",
+  "splitter": "recursive",
+  "chunk_size": 700,
+  "chunk_overlap": 200,
+  "n_trechos": 49,
+  "tamanho_medio": 669,
+  "tamanho_min": 617,
+  "tamanho_max": 698
+}

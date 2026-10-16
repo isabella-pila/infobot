@@ -1,0 +1,2 @@
+﻿id,faithfulness,answer_relevancy,context_relevance,faithfulness_artigo1,answer_relevancy_artigo1,context_relevance_artigo1,faithfulness_diferenca,answer_relevancy_diferenca,context_relevance_diferenca,n_chunks,contexto_truncado
+Q19,0.6667,0.4298,0.0,0.88,0.69,0.25,-0.213,-0.26,-0.25,16,True

@@ -1,5 +1,5 @@
 {
-  "modelo": "gemini-3.8-flash",
+  "modelo": "gemini-3.5-flash-lite",
   "temperatura_sintetizador": 0.7,
   "temperatura_planejador": 0.2,
   "temperatura_verificador": 0.0,

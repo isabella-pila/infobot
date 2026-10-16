@@ -1,0 +1,2 @@
+﻿id,repeticao,faithfulness,answer_relevancy,context_relevance,n_chunks,chars_contexto,contexto_truncado,completo
+Q19,1,0.6667,0.4298,0.0,16,22737,True,True

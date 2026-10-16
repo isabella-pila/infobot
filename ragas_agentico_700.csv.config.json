@@ -1,0 +1,6 @@
+{
+  "avaliador": "gpt-3.5-turbo",
+  "temperatura": 0,
+  "embedding": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+  "ragas": "0.2.15"
+}

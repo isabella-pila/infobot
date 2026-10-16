@@ -1,0 +1,2 @@
+﻿id,faithfulness_convencional,faithfulness_agentico,faithfulness_artigo1,faithfulness_conv_menos_agentico,answer_relevancy_convencional,answer_relevancy_agentico,answer_relevancy_artigo1,answer_relevancy_conv_menos_agentico,context_relevance_convencional,context_relevance_agentico,context_relevance_artigo1,context_relevance_conv_menos_agentico,n_chunks,contexto_truncado
+Q19,0.5714,0.9091,0.88,-0.338,0.4902,0.0,0.69,0.49,0.5,0.0,0.25,0.5,4,False
